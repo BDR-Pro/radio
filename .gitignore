@@ -216,3 +216,9 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# SDR Kid runtime output
+sdr_kid/static/*.html
+sdr_kid/static/*.png
+sdr_kid/static/*.wav
+!sdr_kid/static/.gitkeep
