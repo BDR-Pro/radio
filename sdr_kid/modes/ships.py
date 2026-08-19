@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import shutil
 import socket
 import time
 import webbrowser
