@@ -114,14 +114,55 @@ python -m sdr_kid --skip-dongle
 ## Ship tracker: one extra step
 
 The ship tracker needs a second little program running in another terminal
-that decodes the raw radio into AIS sentences and pipes them to SDR Kid:
+that decodes the raw radio into AIS sentences and pipes them to SDR Kid over
+UDP port `10110`. Pick the one for your OS:
+
+**Linux / macOS** (once `rtl-ais` is installed from step 4):
 
 ```bash
 rtl_ais -h 127.0.0.1 -P 10110
 ```
 
-Then pick **Track ships** in the SDR Kid menu. Boats within about 40 km of a
-coast (or 10 km of a river) will start appearing on the map.
+**Windows** — there's no `apt-get` for `rtl-ais`, so use one of these:
+
+*Option A — `AIS-catcher` (easiest, well-maintained).*
+1. Grab the Windows zip from
+   <https://github.com/jvde-github/AIS-catcher/releases> (pick the
+   `AIS-catcher-vX.Y.Z-win64.zip` asset) and unzip it somewhere like
+   `C:\ais-catcher\`.
+2. Open a **second** PowerShell window (leave SDR Kid running in the first).
+3. Run:
+
+   ```powershell
+   cd C:\ais-catcher
+   .\AIS-catcher.exe -u 127.0.0.1 10110
+   ```
+
+   That command tunes both AIS channels (161.975 & 162.025 MHz), decodes them,
+   and fires the NMEA sentences at SDR Kid.
+
+*Option B — `rtl-ais` Windows build.*
+1. Download the prebuilt Windows binary from
+   <https://github.com/dgiardini/rtl-ais/releases> (the `rtl-ais-win.zip` asset).
+   Unzip into `C:\rtl-ais\`.
+2. Make sure the folder is on your `PATH` **or** just `cd` into it.
+3. Run:
+
+   ```powershell
+   cd C:\rtl-ais
+   .\rtl_ais.exe -h 127.0.0.1 -P 10110
+   ```
+
+   Same idea as Linux/macOS, same UDP port.
+
+**Then**, in your first terminal, pick **Track ships** in the SDR Kid menu.
+Boats within about 40 km of a coast (or 10 km of a river) will start
+appearing on the map.
+
+> Firewall note (Windows): the first time you launch the decoder, Windows
+> Defender may ask to allow it — click *Allow access* for **Private
+> networks** only. SDR Kid listens on `127.0.0.1`, so nothing leaves your
+> laptop.
 
 ## Where's the map?
 
