@@ -20,9 +20,10 @@ class DongleInfo:
 
 
 def _detect_via_rtl_test() -> DongleInfo:
-    exe = shutil.which("rtl_test")
+    from sdr_kid.deps import which as _which
+    exe = _which("rtl_test")
     if not exe:
-        return DongleInfo(False, reason="rtl_test not installed")
+        return DongleInfo(False, reason="rtl_test not on PATH")
     try:
         proc = subprocess.run(
             [exe, "-t"],
