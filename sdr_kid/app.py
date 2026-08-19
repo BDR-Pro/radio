@@ -27,6 +27,8 @@ MENU: List[Tuple[str, str, str, str]] = [
     ("Record & replay raw radio (IQ)",          "sdr_kid.modes.iq",           "run", "save raw samples to disk, replay them like a tape"),
     ("Show my quests",                          "sdr_kid.progress",           "_show_quests_from_menu",
                                                                                      "tick off milestones — first plane, caught the ISS, decoded a satellite…"),
+    ("Health check (is everything installed?)", "sdr_kid.doctor",             "_from_menu",
+                                                                                     "runs every check — Python packages, tools, dongle, ports, disk"),
     ("Quit",                                    "",                           "",    ""),
 ]
 
@@ -154,6 +156,9 @@ def _parse_args(argv: List[str]) -> argparse.Namespace:
                         "modes, or when dump1090 / AIS-catcher already owns it)")
     p.add_argument("--list", action="store_true",
                    help="print a table of every mode SDR Kid ships with, then exit")
+    p.add_argument("--doctor", action="store_true",
+                   help="run a health check — Python packages, external tools, "
+                        "dongle, ports, disk — and print exactly what's missing")
     p.add_argument("--version", action="version", version=f"sdr-kid {__version__}")
     return p.parse_args(argv)
 
@@ -166,6 +171,13 @@ def main() -> int:
     if args.list:
         _cli_help(console)
         return 0
+
+    if args.doctor:
+        from sdr_kid.doctor import render, run_all
+        console.print("[cyan]running health check…[/]")
+        results = run_all()
+        render(console, results)
+        return 0 if not any(r.status == "fail" for r in results) else 1
 
     from rich.panel import Panel
     from sdr_kid.banner import render_banner

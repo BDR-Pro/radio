@@ -31,3 +31,15 @@ def test_list_prints_mode_table():
     assert "FM" in r.stdout
     assert "dump1090" in r.stdout
     assert "OpenSky" in r.stdout
+    assert "Health check" in r.stdout
+
+
+def test_doctor_runs_and_produces_output():
+    r = subprocess.run(
+        [sys.executable, "-m", "sdr_kid", "--doctor"],
+        capture_output=True, text=True, timeout=30,
+    )
+    # exit code is 0 (all pass/warn/skip) or 1 (something failed) — both are OK
+    assert r.returncode in (0, 1)
+    assert "health check" in r.stdout.lower()
+    assert "pass" in r.stdout.lower() or "fail" in r.stdout.lower()

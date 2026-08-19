@@ -371,7 +371,37 @@ you *exactly* how radio + Python fit together.
 python -m pytest -q
 ```
 
-Tests fake the dongle so they work anywhere.
+Tests fake the dongle so they work anywhere. 43 checks covering
+achievements, logbook + watchlist, spectrum helpers, real AIS decode
+(single + multi-fragment), IQ round-trip, FastAPI landing page +
+WebSocket end-to-end, location picker, doctor probes, and the CLI
+(`--help`, `--version`, `--list`, `--doctor`).
+
+## Is my setup working? — `--doctor`
+
+Not sure if everything's installed correctly? Run:
+
+```bash
+python -m sdr_kid --doctor
+```
+
+You'll get a table like:
+
+```
+✔ pass  python: rich                stream spectrum to the browser
+✔ pass  python: pyais               decode ship AIS sentences
+✘ fail  tool: rtl_fm                needed to listen to FM / ATC / NOAA
+! warn  tool: dump1090              needed to run the airplane tracker
+✔ pass  port 8000: free             SDR Kid can start the map server
+· skip  dump1090: 127.0.0.1:30003   nothing listening (start it when you want it)
+✔ pass  UDP 10110: can bind         ship tracker will be able to listen for AIS
+✔ pass  sqlite: read/write          logbook can persist plane sightings
+```
+
+Every red row gets an OS-specific fix line ("`sudo apt install rtl-sdr`",
+"add `C:\rtl-sdr\` to PATH", etc.) — no more guessing what's broken.
+The doctor is also available from the interactive menu as **"Health
+check (is everything installed?)"**.
 
 ## Troubleshooting
 
