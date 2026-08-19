@@ -1,28 +1,18 @@
 from __future__ import annotations
 
+import sys
+import threading
 import time
-from typing import List, Optional
+from collections import deque
+from typing import Deque, List, Optional
 
-import numpy as np
 import questionary
 from rich.console import Console, Group
 from rich.live import Live
 from rich.panel import Panel
 from rich.text import Text
 
-
-BANDS = [
-    ("FM broadcast (music)",         88_000_000, 108_000_000),
-    ("Aviation VHF (planes)",       118_000_000, 137_000_000),
-    ("VHF ham / satellites",        144_000_000, 148_000_000),
-    ("Marine VHF (ships)",          156_000_000, 162_000_000),
-    ("Weather satellites (NOAA)",   137_000_000, 138_000_000),
-    ("Pagers / POCSAG",             138_000_000, 144_000_000),
-    ("Airband ACARS",               131_000_000, 132_000_000),
-    ("PMR446 (walkie talkies EU)",  446_000_000, 446_200_000),
-    ("70cm ham",                    430_000_000, 440_000_000),
-    ("ADS-B (planes)",             1_090_000_000, 1_090_500_000),
-]
+from sdr_kid.modes._spectrum import BANDS, Sweep, color_for, make_sdr, normalize, sweep
 
 
 BAR_CHARS = " ▁▂▃▄▅▆▇█"
@@ -47,80 +37,55 @@ def _pick_band() -> Optional[tuple[str, int, int]]:
     return BANDS[idx]
 
 
-def _sample_power(sdr, center_hz: int, samples: int = 256 * 1024) -> float:
-    sdr.center_freq = center_hz
-    iq = sdr.read_samples(samples)
-    p = float(np.mean(np.abs(iq) ** 2))
-    return 10.0 * np.log10(p + 1e-12)
+def _ui_choice() -> str:
+    return questionary.select(
+        "How should we show it?",
+        choices=[
+            "Textual waterfall (fullscreen, keyboard-driven)",
+            "Rich bar chart (simple scrolling view)",
+            "Cancel",
+        ],
+    ).ask() or "Cancel"
 
 
-def _render(name: str, lo: int, hi: int, powers: List[float], freqs: List[int]) -> Panel:
-    if not powers:
+# --- Rich fallback (bar chart) -------------------------------------------------
+
+
+def _render_bars(name: str, lo: int, hi: int, sw: Optional[Sweep]) -> Panel:
+    if sw is None or not sw.powers_db:
         return Panel(f"scanning {name}…", border_style="magenta")
-    pmin, pmax = min(powers), max(powers)
-    span = max(pmax - pmin, 1.0)
-    width = 60
-    step = max(1, len(powers) // width)
-    bar_lines: List[Text] = []
-    for i in range(0, len(powers), step):
-        chunk = powers[i:i + step]
-        norm = (sum(chunk) / len(chunk) - pmin) / span
-        idx = min(len(BAR_CHARS) - 1, int(norm * (len(BAR_CHARS) - 1)))
-        f_mhz = freqs[i] / 1e6
-        color = "green" if norm < 0.35 else ("yellow" if norm < 0.7 else "red")
-        line = Text.assemble(
-            (f"{f_mhz:8.2f} MHz  ", "dim"),
-            (BAR_CHARS[idx] * 40, color),
-            (f"  {(sum(chunk)/len(chunk)):+6.1f} dB", "dim"),
-        )
-        bar_lines.append(line)
+    norms = normalize(sw.powers_db)
+    lines: List[Text] = []
+    width = 40
+    for f, p, n in zip(sw.freqs_hz, sw.powers_db, norms):
+        idx = min(len(BAR_CHARS) - 1, int(n * (len(BAR_CHARS) - 1)))
+        col = color_for(n)
+        lines.append(Text.assemble(
+            (f"{f/1e6:8.2f} MHz  ", "dim"),
+            (BAR_CHARS[idx] * width, col),
+            (f"  {p:+6.1f} dB", "dim"),
+        ))
     return Panel(
-        Group(*bar_lines),
+        Group(*lines),
         title=f"[magenta]:mag: RF explorer — {name}[/]",
         border_style="magenta",
         subtitle=f"[dim]{lo/1e6:.2f}-{hi/1e6:.2f} MHz • Ctrl+C to stop[/]",
     )
 
 
-def run(console: Console) -> None:
-    picked = _pick_band()
-    if picked is None:
-        return
-    name, lo, hi = picked
+def _run_rich(console: Console, name: str, lo: int, hi: int) -> None:
     try:
-        from rtlsdr import RtlSdr  # type: ignore
-    except Exception as exc:
-        console.print(Panel(f"[red]pyrtlsdr not usable ({exc})[/]"))
-        return
-    try:
-        sdr = RtlSdr()
+        sdr = make_sdr()
     except Exception as exc:
         console.print(Panel(f"[red]could not open dongle: {exc}[/]"))
         return
+    latest: Optional[Sweep] = None
     try:
-        sdr.sample_rate = 2.048e6
-        sdr.gain = "auto"
-        step = int(sdr.sample_rate * 0.9)
-        freqs = list(range(lo + step // 2, hi, step))
-        if not freqs:
-            freqs = [(lo + hi) // 2]
-        powers: List[float] = []
-        console.print(
-            Panel(
-                "Green = quiet, yellow = something's talking, red = loud transmitter.\n"
-                "This is a [bold]spectrum sweep[/] — the dongle hops across the band "
-                "measuring how much energy is in each slice.",
-                title="[magenta]:sparkles: what you're looking at[/]",
-                border_style="magenta",
-            )
-        )
-        with Live(_render(name, lo, hi, powers, freqs), console=console, refresh_per_second=4) as live:
+        with Live(_render_bars(name, lo, hi, latest), console=console, refresh_per_second=4) as live:
             while True:
-                powers = []
-                for f in freqs:
-                    powers.append(_sample_power(sdr, f))
-                    live.update(_render(name, lo, hi, powers, freqs[:len(powers)]))
-                time.sleep(0.5)
+                latest = sweep(sdr, lo, hi)
+                live.update(_render_bars(name, lo, hi, latest))
+                time.sleep(0.3)
     except KeyboardInterrupt:
         pass
     finally:
@@ -128,4 +93,183 @@ def run(console: Console) -> None:
             sdr.close()
         except Exception:
             pass
-        console.print("[dim]stopped.[/]")
+
+
+# --- Textual waterfall ---------------------------------------------------------
+
+
+def _run_textual(name: str, lo: int, hi: int) -> None:
+    from textual.app import App, ComposeResult
+    from textual.binding import Binding
+    from textual.containers import Vertical
+    from textual.reactive import reactive
+    from textual.widget import Widget
+    from textual.widgets import Footer, Header, Static
+    from rich.text import Text as RichText
+
+    class Waterfall(Widget):
+        DEFAULT_CSS = "Waterfall{ height: 1fr; }"
+        rows: Deque[List[float]] = deque(maxlen=200)
+
+        def __init__(self, band_lo: int, band_hi: int, **kw):
+            super().__init__(**kw)
+            self.band_lo = band_lo
+            self.band_hi = band_hi
+
+        def push(self, powers: List[float]) -> None:
+            self.rows.appendleft(list(powers))
+            self.refresh()
+
+        def render(self) -> RichText:
+            if not self.rows:
+                return RichText("scanning…", style="dim")
+            width = max(self.size.width - 12, 20)
+            height = min(len(self.rows), max(self.size.height - 2, 4))
+            all_vals = [v for row in list(self.rows)[:height] for v in row]
+            if not all_vals:
+                return RichText("scanning…", style="dim")
+            pmin, pmax = min(all_vals), max(all_vals)
+            span = max(pmax - pmin, 1.0)
+            out = RichText()
+            for r in range(height):
+                row = self.rows[r]
+                if not row:
+                    continue
+                step = max(1, len(row) // width)
+                for i in range(0, len(row), step):
+                    chunk = row[i:i + step]
+                    n = (sum(chunk) / len(chunk) - pmin) / span
+                    out.append("█", style=color_for(n))
+                out.append(f"  {pmax:+5.0f}dB\n" if r == 0 else "\n", style="dim")
+            return out
+
+    class PeakBar(Widget):
+        DEFAULT_CSS = "PeakBar{ height: 3; }"
+        latest: Sweep | None = reactive(None)
+
+        def render(self) -> RichText:
+            if self.latest is None:
+                return RichText("no sweep yet", style="dim")
+            peak_idx = max(range(len(self.latest.powers_db)),
+                           key=lambda i: self.latest.powers_db[i])
+            peak_hz = self.latest.freqs_hz[peak_idx]
+            peak_db = self.latest.powers_db[peak_idx]
+            t = RichText()
+            t.append("peak: ", style="dim")
+            t.append(f"{peak_hz/1e6:8.3f} MHz  ", style="bold yellow")
+            t.append(f"{peak_db:+6.1f} dB", style="bold red")
+            t.append("     ")
+            t.append(f"band: {self.latest.freqs_hz[0]/1e6:.2f}"
+                     f"–{self.latest.freqs_hz[-1]/1e6:.2f} MHz",
+                     style="cyan")
+            return t
+
+    class ExplorerApp(App):
+        TITLE = "SDR Kid — RF Explorer"
+        SUB_TITLE = name
+        CSS = """
+        Screen { background: #0b1020; }
+        Header { background: #182349; }
+        Footer { background: #182349; }
+        #peak  { padding: 1 2; }
+        #legend{ dock: bottom; padding: 0 2; color: #98a3c9; }
+        """
+        BINDINGS = [
+            Binding("q", "quit", "quit"),
+            Binding("1", "band(0)", "FM"),
+            Binding("2", "band(1)", "AirVHF"),
+            Binding("3", "band(3)", "HamVHF"),
+            Binding("4", "band(4)", "Marine"),
+            Binding("5", "band(7)", "ADS-B"),
+            Binding("r", "reset",  "reset"),
+        ]
+
+        def __init__(self, lo: int, hi: int):
+            super().__init__()
+            self.lo = lo
+            self.hi = hi
+            self.sdr = None
+            self._stop = threading.Event()
+            self._thread: Optional[threading.Thread] = None
+
+        def compose(self) -> ComposeResult:
+            yield Header()
+            with Vertical():
+                yield PeakBar(id="peak")
+                yield Waterfall(self.lo, self.hi, id="fall")
+                yield Static(
+                    "colors: [#1a1f5c]cold[/] → [#00c8c8]cool[/] → "
+                    "[#ffdc3c]warm[/] → [#ff3c3c]hot[/]  ·  keys: 1 FM / 2 Air / "
+                    "3 Ham / 4 Marine / 5 ADS-B / r reset / q quit",
+                    id="legend",
+                )
+            yield Footer()
+
+        def on_mount(self) -> None:
+            self._start_worker()
+
+        def _start_worker(self) -> None:
+            self._stop.set()
+            if self._thread is not None:
+                self._thread.join(timeout=0.5)
+            self._stop = threading.Event()
+            self._thread = threading.Thread(target=self._worker, daemon=True)
+            self._thread.start()
+
+        def _worker(self) -> None:
+            try:
+                if self.sdr is None:
+                    self.sdr = make_sdr()
+            except Exception as exc:
+                self.call_from_thread(self.exit, f"could not open dongle: {exc}")
+                return
+            while not self._stop.is_set():
+                try:
+                    sw = sweep(self.sdr, self.lo, self.hi)
+                except Exception:
+                    time.sleep(0.5)
+                    continue
+                self.call_from_thread(self._absorb, sw)
+                time.sleep(0.1)
+
+        def _absorb(self, sw: Sweep) -> None:
+            self.query_one("#fall", Waterfall).push(sw.powers_db)
+            self.query_one("#peak", PeakBar).latest = sw
+
+        def action_band(self, idx: int) -> None:
+            if 0 <= idx < len(BANDS):
+                nm, lo, hi = BANDS[idx]
+                self.lo, self.hi = lo, hi
+                self.sub_title = nm
+                self.query_one("#fall", Waterfall).rows.clear()
+                self._start_worker()
+
+        def action_reset(self) -> None:
+            self.query_one("#fall", Waterfall).rows.clear()
+
+        def on_unmount(self) -> None:
+            self._stop.set()
+            if self.sdr is not None:
+                try:
+                    self.sdr.close()
+                except Exception:
+                    pass
+
+    ExplorerApp(lo, hi).run()
+
+
+def run(console: Console) -> None:
+    picked = _pick_band()
+    if picked is None:
+        return
+    name, lo, hi = picked
+    if not sys.stdout.isatty():
+        console.print("[dim]no interactive TTY — using Rich fallback[/]")
+        _run_rich(console, name, lo, hi)
+        return
+    choice = _ui_choice()
+    if choice.startswith("Textual"):
+        _run_textual(name, lo, hi)
+    elif choice.startswith("Rich"):
+        _run_rich(console, name, lo, hi)
+    console.print("[dim]stopped.[/]")

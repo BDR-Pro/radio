@@ -58,11 +58,14 @@ sound (**sox**). Pick your OS:
 ```bash
 sudo apt update
 sudo apt install -y rtl-sdr sox
+# optional but recommended: rtl_ais for the ship tracker
+sudo apt install -y rtl-ais || \
+  (git clone https://github.com/dgiardini/rtl-ais && cd rtl-ais && make && sudo make install)
 ```
 
 **macOS (with Homebrew):**
 ```bash
-brew install librtlsdr sox
+brew install librtlsdr sox rtl-ais
 ```
 
 **Windows:**
@@ -107,6 +110,18 @@ python -m sdr_kid --skip-dongle
 ```
 
 ---
+
+## Ship tracker: one extra step
+
+The ship tracker needs a second little program running in another terminal
+that decodes the raw radio into AIS sentences and pipes them to SDR Kid:
+
+```bash
+rtl_ais -h 127.0.0.1 -P 10110
+```
+
+Then pick **Track ships** in the SDR Kid menu. Boats within about 40 km of a
+coast (or 10 km of a river) will start appearing on the map.
 
 ## Where's the map?
 

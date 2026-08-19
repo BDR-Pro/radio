@@ -20,7 +20,8 @@ plane positions, or a spectrum picture.
 | Library         | Why it's here                                                        |
 |-----------------|----------------------------------------------------------------------|
 | `rich`          | Colored panels, tables, live updating text in the terminal.          |
-| `textual`       | Reserved for future full-screen dashboards (spectrum waterfall).     |
+| `textual`       | Powers the full-screen RF-explorer waterfall (keyboard-driven).      |
+| `pyais`         | Decodes NMEA AIS sentences from `rtl_ais` into ship positions.        |
 | `questionary`   | Arrow-key menus that a kid can use without reading docs.             |
 | `pyfiglet`      | Big ASCII banner — first impressions matter.                         |
 | `pyrtlsdr`      | Python bindings to the C driver `librtlsdr` — talk to the dongle.    |
@@ -117,11 +118,37 @@ AIS receiver later — that's the aspirational goal.
 `modes/explore.py` opens the SDR with `pyrtlsdr`, hops the center frequency
 across a chosen band (e.g. 88–108 MHz), reads a few thousand I/Q samples at
 each step, computes `10·log10(mean(|iq|²))` — a power estimate in dB — and
-paints it as a colored bar chart in the terminal using Rich. Green = quiet,
-yellow = busy, red = loud transmitter. That single loop is the essence of a
-spectrum analyzer, and it's about 30 lines of Python.
+paints it *two* ways:
 
-### 7. ISS mode combines *math* and *radio*
+- **Textual waterfall** — a full-screen `App` with a scrolling waterfall
+  widget (time flows downward, frequency spans the width, color = power) and
+  a peak-marker header. Keyboard bindings (`1`–`5`) hot-swap between bands.
+  A worker thread drives the SDR and calls `App.call_from_thread` to keep
+  Textual's event loop happy.
+- **Rich bar chart fallback** — the original scrolling bar view. It's what
+  runs when the terminal isn't interactive.
+
+Both share `modes/_spectrum.py`, which is the actual radio math: `sweep()`
+retunes the SDR across the band, `color_for(norm)` interpolates a heatmap,
+`normalize()` scales dB → 0..1. Swapping the UI never touches the DSP.
+
+### 7. Ships use the dongle for real
+
+`modes/ships.py` doesn't rely on any online AIS API. It opens a UDP socket
+on port `10110` and expects raw NMEA sentences from
+[`rtl_ais`](https://github.com/dgiardini/rtl-ais) — the same "point the
+dongle at 162 MHz and decode" tool that AIS enthusiasts use. `pyais`
+reassembles multi-fragment sentences and turns them into Python objects
+whose `mmsi`, `lat`, `lon`, `speed`, `shipname`, and `destination` we
+fold into a per-vessel dictionary. First position report puts a boat on
+the map; a matching static-and-voyage report later fills in the name and
+where it's headed.
+
+If nothing is coming in on the port, the panel shows a clear "install
+rtl_ais and pipe it here" instruction rather than lying about the state
+of the world.
+
+### 8. ISS mode combines *math* and *radio*
 
 `modes/iss.py` shows two things you can only really appreciate together:
 
@@ -136,7 +163,7 @@ spectrum analyzer, and it's about 30 lines of Python.
 The live world map (updated every 5s) uses `open-notify.org`'s tiny JSON
 API so you don't need TLE math just to know where the station is *right now*.
 
-### 8. No global state, no framework lock-in
+### 9. No global state, no framework lock-in
 
 Every mode is a plain function `run(console)`. The main menu is a `for`
 loop over `[(label, run_fn), ...]`. Adding your own mode is:

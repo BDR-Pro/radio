@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import shutil
+import socket
 import time
 import webbrowser
-from dataclasses import dataclass
-from typing import List, Optional
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional
 
-import httpx
 import questionary
 from rich.console import Console
 from rich.live import Live
@@ -15,129 +16,169 @@ from rich.table import Table
 from sdr_kid.server import get_server, write_static
 
 
-BOUNDS = "https://services.marinetraffic.com/api/exportvessels"  # placeholder, needs key
-BARENTSWATCH = "https://api.gbif.org"  # fallback shape only
+DEFAULT_UDP_PORT = 10110  # rtl_ais default (also common NMEA port)
 
 
 @dataclass
 class Ship:
-    mmsi: str
-    name: str
-    lat: float
-    lon: float
-    speed_kn: Optional[float]
-    heading: Optional[float]
-    ship_type: str
+    mmsi: int
+    lat: Optional[float] = None
+    lon: Optional[float] = None
+    speed: Optional[float] = None
+    course: Optional[float] = None
+    heading: Optional[float] = None
+    name: str = ""
+    callsign: str = ""
+    ship_type: Optional[int] = None
+    destination: str = ""
+    last_seen: float = field(default_factory=time.time)
 
 
-def _fetch(min_lat: float, max_lat: float, min_lon: float, max_lon: float) -> List[Ship]:
-    """Public AIS feed via aishub JSON mirror. Falls back to empty on failure."""
-    url = (
-        "https://api.vesselfinder.com/?userkey=WS-DEMO-DEMO"
-        f"&latmin={min_lat}&latmax={max_lat}&lonmin={min_lon}&lonmax={max_lon}"
-    )
-    try:
-        with httpx.Client(timeout=15) as client:
-            r = client.get(url)
-            if r.status_code != 200:
-                return _fetch_alt(min_lat, max_lat, min_lon, max_lon)
-            data = r.json()
-    except Exception:
-        return _fetch_alt(min_lat, max_lat, min_lon, max_lon)
-    ships: List[Ship] = []
-    if not isinstance(data, list):
-        return ships
-    for row in data:
+class AISListener:
+    """Listens on UDP for NMEA AIS from rtl_ais / aisdispatcher.
+
+    rtl_ais typical invocation:
+        rtl_ais -h 127.0.0.1 -P 10110
+    """
+
+    def __init__(self, port: int = DEFAULT_UDP_PORT):
+        self.port = port
+        self.sock: Optional[socket.socket] = None
+        self.ships: Dict[int, Ship] = {}
+        self.rx_count = 0
+        self.last_rx_at: Optional[float] = None
+        # buffer for multi-part sentences keyed by their sequence id
+        self._pending: Dict[str, list] = {}
         try:
-            ships.append(
-                Ship(
-                    mmsi=str(row.get("MMSI", "")),
-                    name=str(row.get("SHIPNAME", "unknown")).strip() or "unknown",
-                    lat=float(row["LAT"]),
-                    lon=float(row["LON"]),
-                    speed_kn=float(row["SPEED"]) if row.get("SPEED") else None,
-                    heading=float(row["COURSE"]) if row.get("COURSE") else None,
-                    ship_type=str(row.get("SHIPTYPE", "vessel")),
-                )
-            )
+            from pyais import decode  # noqa: F401
+            self._decoder_ok = True
         except Exception:
-            continue
-    return ships
+            self._decoder_ok = False
 
-
-def _fetch_alt(min_lat, max_lat, min_lon, max_lon) -> List[Ship]:
-    """Fallback: pull recent AIS from ais.exploratorium (public sample)."""
-    url = "https://ais.rtl-sdr.com/ships.json"
-    try:
-        with httpx.Client(timeout=10) as client:
-            r = client.get(url)
-            if r.status_code != 200:
-                return []
-            rows = r.json()
-    except Exception:
-        return []
-    out: List[Ship] = []
-    for row in rows:
+    def start(self) -> Optional[str]:
+        if not self._decoder_ok:
+            return "pyais is not installed (pip install pyais)"
         try:
-            lat = float(row["lat"])
-            lon = float(row["lon"])
-        except (KeyError, TypeError, ValueError):
-            continue
-        if not (min_lat <= lat <= max_lat and min_lon <= lon <= max_lon):
-            continue
-        out.append(
-            Ship(
-                mmsi=str(row.get("mmsi", "")),
-                name=str(row.get("name", "unknown")),
-                lat=lat,
-                lon=lon,
-                speed_kn=row.get("speed"),
-                heading=row.get("course"),
-                ship_type=str(row.get("type", "vessel")),
-            )
-        )
-    return out
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            s.bind(("0.0.0.0", self.port))
+            s.setblocking(False)
+        except Exception as exc:
+            return f"could not bind UDP :{self.port} — {exc}"
+        self.sock = s
+        return None
+
+    def poll(self) -> None:
+        if self.sock is None:
+            return
+        from pyais import decode
+        # buffer for multi-fragment sentences keyed by (channel, seq)
+        while True:
+            try:
+                data, _ = self.sock.recvfrom(4096)
+            except BlockingIOError:
+                return
+            self.last_rx_at = time.time()
+            for line in data.splitlines():
+                line = line.strip()
+                if not line.startswith(b"!"):
+                    continue
+                fields = line.split(b",")
+                if len(fields) < 7:
+                    continue
+                try:
+                    total = int(fields[1])
+                    frag = int(fields[2])
+                    seq  = fields[3].decode(errors="ignore") or "_"
+                except ValueError:
+                    continue
+                if total == 1:
+                    frames = [line]
+                else:
+                    key = f"{seq}:{total}"
+                    buf = self._pending.setdefault(key, [None] * total)
+                    if 1 <= frag <= total:
+                        buf[frag - 1] = line
+                    if any(x is None for x in buf):
+                        continue
+                    frames = buf
+                    self._pending.pop(key, None)
+                try:
+                    msg = decode(*frames)
+                except Exception:
+                    continue
+                self.rx_count += 1
+                self._absorb(msg)
+
+    def _absorb(self, msg) -> None:
+        mmsi = getattr(msg, "mmsi", None)
+        if mmsi is None:
+            return
+        s = self.ships.setdefault(int(mmsi), Ship(mmsi=int(mmsi)))
+        s.last_seen = time.time()
+        for attr, target in (
+            ("lat", "lat"), ("lon", "lon"), ("speed", "speed"),
+            ("course", "course"), ("heading", "heading"),
+            ("shipname", "name"), ("callsign", "callsign"),
+            ("ship_type", "ship_type"), ("destination", "destination"),
+        ):
+            v = getattr(msg, attr, None)
+            if v in (None, "", 0) and target in ("name", "callsign", "destination"):
+                continue
+            if v is not None:
+                setattr(s, target, v.strip() if isinstance(v, str) else v)
+
+    def close(self) -> None:
+        if self.sock is not None:
+            self.sock.close()
+            self.sock = None
 
 
-def _table(ships: List[Ship]) -> Table:
+def _table(listener: AISListener) -> Table:
+    now = time.time()
+    fresh = [s for s in listener.ships.values() if now - s.last_seen < 300 and s.lat is not None]
     table = Table(
-        title=f":ship: [bold]{len(ships)} ships in view[/]",
+        title=f":ship: [bold]{len(fresh)} ships heard[/]  •  {listener.rx_count} AIS messages received",
         border_style="blue",
         header_style="bold blue",
     )
     table.add_column("name", style="bold white")
-    table.add_column("mmsi", style="dim")
-    table.add_column("type")
+    table.add_column("MMSI", style="dim")
     table.add_column("kn", justify="right")
     table.add_column("lat", justify="right", style="dim")
     table.add_column("lon", justify="right", style="dim")
-    for s in ships[:25]:
+    table.add_column("dest")
+    for s in sorted(fresh, key=lambda x: -x.last_seen)[:25]:
         table.add_row(
-            s.name[:22],
-            s.mmsi,
-            s.ship_type[:14],
-            f"{s.speed_kn:.1f}" if s.speed_kn is not None else "—",
-            f"{s.lat:.2f}",
-            f"{s.lon:.2f}",
+            (s.name or "—")[:22],
+            str(s.mmsi),
+            f"{s.speed:.1f}" if s.speed is not None else "—",
+            f"{s.lat:.3f}" if s.lat is not None else "—",
+            f"{s.lon:.3f}" if s.lon is not None else "—",
+            (s.destination or "—")[:16],
         )
     return table
 
 
-def _build_map(ships: List[Ship], center_lat: float, center_lon: float) -> str:
+def _build_map(listener: AISListener) -> Optional[str]:
     import folium
 
-    m = folium.Map(location=[center_lat, center_lon], zoom_start=7, tiles="CartoDB dark_matter")
-    folium.Marker(
-        [center_lat, center_lon],
-        tooltip="you are here",
-        icon=folium.Icon(color="red", icon="home"),
-    ).add_to(m)
+    now = time.time()
+    ships = [s for s in listener.ships.values()
+             if s.lat is not None and s.lon is not None and now - s.last_seen < 600]
+    if not ships:
+        return None
+    cy = sum(s.lat for s in ships) / len(ships)
+    cx = sum(s.lon for s in ships) / len(ships)
+    m = folium.Map(location=[cy, cx], zoom_start=8, tiles="CartoDB dark_matter")
     for s in ships:
         popup = (
-            f"<b>{s.name}</b><br>"
+            f"<b>{s.name or 'unknown'}</b><br>"
             f"MMSI: {s.mmsi}<br>"
-            f"type: {s.ship_type}<br>"
-            f"speed: {s.speed_kn} kn"
+            f"callsign: {s.callsign or '—'}<br>"
+            f"speed: {s.speed if s.speed is not None else '—'} kn<br>"
+            f"course: {s.course if s.course is not None else '—'}°<br>"
+            f"dest: {s.destination or '—'}"
         )
         folium.CircleMarker(
             [s.lat, s.lon],
@@ -145,74 +186,86 @@ def _build_map(ships: List[Ship], center_lat: float, center_lon: float) -> str:
             color="#00c8ff",
             fill=True,
             fill_opacity=0.9,
-            popup=folium.Popup(popup, max_width=250),
-            tooltip=s.name,
+            popup=folium.Popup(popup, max_width=260),
+            tooltip=s.name or str(s.mmsi),
         ).add_to(m)
     return m.get_root().render()
 
 
-def _ask_area() -> Optional[tuple[float, float, float, float, float, float]]:
-    presets = {
-        "Persian Gulf":  (24.0, 27.5, 50.0, 57.0),
-        "English Channel": (49.0, 51.5, -2.0, 2.5),
-        "Suez / Red Sea": (12.0, 30.0, 32.0, 44.0),
-        "Singapore Strait": (0.5, 2.5, 102.0, 106.0),
-        "San Francisco Bay": (37.0, 38.2, -123.0, -121.5),
-    }
-    ans = questionary.select(
-        "Pick an ocean area to watch:",
-        choices=list(presets.keys()) + ["Cancel"],
-    ).ask()
-    if not ans or ans == "Cancel":
-        return None
-    a, b, c, d = presets[ans]
-    return a, b, c, d, (a + b) / 2, (c + d) / 2
+HOW_TO_INSTALL = (
+    "SDR Kid listens for AIS on [bold]UDP :{port}[/]. Nothing is talking yet.\n\n"
+    "In another terminal, run one of these:\n"
+    "  [cyan]rtl_ais -h 127.0.0.1 -P {port}[/]         # needs `rtl-ais` installed\n"
+    "  [cyan]aisdecoder -h 127.0.0.1 -p {port} ...[/]  # alternative\n\n"
+    "rtl-ais install:\n"
+    "  Ubuntu/Pi:  [cyan]git clone https://github.com/dgiardini/rtl-ais && cd rtl-ais && make && sudo make install[/]\n"
+    "  macOS:      [cyan]brew install rtl-ais[/]\n\n"
+    "AIS runs on 161.975 MHz and 162.025 MHz — you need to be within about 40 km\n"
+    "of the coast, or ~10 km of a river, for a normal whip antenna to hear ships."
+)
 
 
 def run(console: Console) -> None:
-    picked = _ask_area()
-    if picked is None:
+    port_ans = questionary.text(
+        "UDP port to listen on (rtl_ais default is 10110):", default=str(DEFAULT_UDP_PORT)
+    ).ask()
+    if not port_ans:
         return
-    min_lat, max_lat, min_lon, max_lon, cy, cx = picked
+    try:
+        port = int(port_ans)
+    except ValueError:
+        console.print("[red]not a number[/]")
+        return
+
+    listener = AISListener(port=port)
+    err = listener.start()
+    if err:
+        console.print(Panel(f"[red]{err}[/]", title="[red]can't listen[/]"))
+        return
 
     server = get_server()
+    rtl_ais_present = shutil.which("rtl_ais") is not None
+    hint = "[green]rtl_ais found on PATH[/]" if rtl_ais_present else "[yellow]rtl_ais not on PATH — install it to actually decode[/]"
     console.print(
         Panel(
-            "Ships broadcast their location on 161.975 MHz and 162.025 MHz "
-            "(a system called [bold]AIS[/]). Coastal receivers relay it to the "
-            "web. With your dongle and [bold]rtl-ais[/] you can decode it "
-            "yourself when a ship is nearby!\n\n"
-            f"Live map: [cyan]{server.url}/view/ships.html[/]",
-            title="[blue]:ship: ship tracker[/]",
+            f"Listening on [bold]UDP :{port}[/] for NMEA AIS sentences.\n"
+            f"{hint}\n\n"
+            f"Live map (updates every 10s once ships come in): "
+            f"[cyan]{server.url}/view/ships.html[/]\n\n"
+            "[dim]Ctrl+C to stop.[/]",
+            title="[blue]:ship: ship tracker (local AIS decoder)[/]",
             border_style="blue",
         )
     )
 
     opened = False
+    last_map = 0.0
     try:
-        with Live(console=console, refresh_per_second=1) as live:
+        with Live(console=console, refresh_per_second=2) as live:
             while True:
-                try:
-                    ships = _fetch(min_lat, max_lat, min_lon, max_lon)
-                except Exception as exc:
-                    live.update(Panel(f"[red]AIS feed error:[/] {exc}"))
-                    ships = []
-                if not ships:
+                listener.poll()
+                now = time.time()
+                if listener.rx_count == 0:
                     live.update(Panel(
-                        "[yellow]No live ships from the public feed right now.[/]\n"
-                        "Try a busier area, or plug in [bold]rtl-ais[/] and be your own receiver!",
+                        HOW_TO_INSTALL.format(port=port),
+                        title="[yellow]waiting for AIS…[/]",
                         border_style="yellow",
                     ))
                 else:
-                    html = _build_map(ships, cy, cx)
-                    write_static("ships.html", html)
-                    live.update(_table(ships))
-                    if not opened:
-                        try:
-                            webbrowser.open(f"{server.url}/view/ships.html")
-                        except Exception:
-                            pass
-                        opened = True
-                time.sleep(15)
+                    live.update(_table(listener))
+                    if now - last_map > 10:
+                        html = _build_map(listener)
+                        if html:
+                            write_static("ships.html", html)
+                            if not opened:
+                                try:
+                                    webbrowser.open(f"{server.url}/view/ships.html")
+                                except Exception:
+                                    pass
+                                opened = True
+                        last_map = now
+                time.sleep(0.5)
     except KeyboardInterrupt:
         console.print("[dim]stopped.[/]")
+    finally:
+        listener.close()
