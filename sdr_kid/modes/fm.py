@@ -73,6 +73,7 @@ def run(console: Console) -> None:
         console.print(Panel(f"[red]{problem}[/]", title="[red]cannot play audio[/]"))
         return
     chain.start()
+    console.print(f"[dim]pipeline: {chain.command_preview()}[/]")
     started = time.time()
     achievements.celebrate(console, achievements.record("fm_played"))
     try:
@@ -80,6 +81,15 @@ def run(console: Console) -> None:
             while True:
                 time.sleep(0.5)
                 live.update(_now_playing_panel(freq, started))
+                if not chain.alive():
+                    live.stop()
+                    diag = chain.diagnose() or "the audio pipeline died silently."
+                    console.print(Panel(
+                        diag + "\n\n[dim]Try the command above by hand in PowerShell "
+                        "to see the raw error.[/]",
+                        title="[red]FM stopped[/]", border_style="red",
+                    ))
+                    break
     except KeyboardInterrupt:
         pass
     finally:
