@@ -9,24 +9,26 @@ from rich.panel import Panel
 from sdr_kid.banner import render_banner
 from sdr_kid.dongle import probe, show_dongle_card, wait_for_dongle
 from sdr_kid.modes import (
-    alerts_ui, atc, explore, fm, iq, iss, logbook_ui, noaa, planes, ships,
+    alerts_ui, atc, explore, fm, iq, iss, logbook_ui, noaa,
+    planes, planes_local, ships,
 )
 from sdr_kid.progress import summary_table
 
 
 MENU = [
-    ("Listen to FM radio (music)",          fm.run),
-    ("Track airplanes on a map",            planes.run),
-    ("Listen to Air Traffic Control",       atc.run),
-    ("Look at the ISS (space station)",     iss.run),
-    ("Track ships on the ocean",            ships.run),
-    ("Explore the RF spectrum",             explore.run),
-    ("Catch a NOAA weather-satellite image", noaa.run),
-    ("Overhead alerts (ISS / NOAA)",        alerts_ui.run),
-    ("Airplane logbook + watchlist",        logbook_ui.run),
-    ("Record & replay raw radio (IQ)",      iq.run),
-    ("Show my quests",                      lambda c: c.print(summary_table())),
-    ("Quit",                                None),
+    ("Listen to FM radio (music)",              fm.run),
+    ("Track airplanes — my antenna (dump1090)", planes_local.run),
+    ("Track airplanes — the world (OpenSky)",   planes.run),
+    ("Listen to Air Traffic Control",           atc.run),
+    ("Look at the ISS (space station)",         iss.run),
+    ("Track ships on the ocean",                ships.run),
+    ("Explore the RF spectrum",                 explore.run),
+    ("Catch a NOAA weather-satellite image",    noaa.run),
+    ("Overhead alerts (ISS / NOAA)",            alerts_ui.run),
+    ("Airplane logbook + watchlist",            logbook_ui.run),
+    ("Record & replay raw radio (IQ)",          iq.run),
+    ("Show my quests",                          lambda c: c.print(summary_table())),
+    ("Quit",                                    None),
 ]
 
 

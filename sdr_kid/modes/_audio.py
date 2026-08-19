@@ -67,13 +67,22 @@ class AudioChain:
                 "-",
             ]
         if which("sox"):
-            return [
+            cmd = [
                 which("sox"), "-q",
                 "-r", "48000", "-t", "raw",
                 "-e", "signed", "-b", "16", "-c", "1",
                 "-",              # input from stdin
-                "-d",             # output to default audio device
             ]
+            # `-d` (default device) requires $AUDIODEV set on Windows and
+            # commonly errors with "no default audio device configured".
+            # Naming the driver explicitly always works.
+            if sys.platform == "win32":
+                cmd += ["-t", "waveaudio", "-d"]
+            elif sys.platform == "darwin":
+                cmd += ["-t", "coreaudio", "-d"]
+            else:
+                cmd += ["-d"]     # ALSA on Linux; SoX finds it fine.
+            return cmd
         return [
             which("aplay") or "aplay", "-q",
             "-r", "48000", "-f", "S16_LE", "-t", "raw", "-c", "1",
