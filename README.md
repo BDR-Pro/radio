@@ -69,10 +69,62 @@ brew install librtlsdr sox rtl-ais
 ```
 
 **Windows:**
-- Download the RTL-SDR drivers from https://www.rtl-sdr.com/ (follow the
-  Zadig install page — this replaces Windows' built-in TV driver so your
-  Python code can talk to the dongle).
-- Install SoX from https://sox.sourceforge.net/ and add it to your PATH.
+
+Windows needs three things: the RTL-SDR tools, SoX (for audio), and the
+right USB driver. All three follow the same *download → unzip → add to
+PATH* pattern.
+
+1. **RTL-SDR tools** — download the zip from
+   <https://ftp.osmocom.org/binaries/windows/rtl-sdr/> (grab
+   `rtl-sdr-64bit-*.zip`). Unzip somewhere permanent, e.g.
+   `C:\Users\<you>\radio\rtl-sdr-64bit-20260816\`.
+2. **SoX** — install from <https://sourceforge.net/projects/sox/> (default
+   install path is `C:\Program Files (x86)\sox-14-4-2\`).
+3. **Add both folders to your user PATH.** Open **PowerShell** and paste
+   this (adjust the two paths at the top to match yours):
+
+   ```powershell
+   $folders = @(
+     'C:\Users\bader\radio\rtl-sdr-64bit-20260816',
+     'C:\Program Files (x86)\sox-14-4-2'
+   )
+   $old = [Environment]::GetEnvironmentVariable('Path','User')
+   foreach ($f in $folders) {
+     if (-not ($old.Split(';') -contains $f)) {
+       $old = "$old;$f"
+       Write-Host "added $f"
+     }
+     $env:Path += ";$f"   # also apply to THIS shell
+   }
+   [Environment]::SetEnvironmentVariable('Path', $old, 'User')
+   ```
+
+   That's a **one-time** step — it survives reboots and applies to
+   every new PowerShell / VS Code terminal you open. Verify with:
+
+   ```powershell
+   where.exe rtl_test        # should print the .exe's full path
+   where.exe sox             # same
+   rtl_test.exe -t           # should print "Found Rafael Micro R820T tuner"
+   ```
+
+   > ⚠️ **After adding to PATH, close and re-open PowerShell / VS Code.**
+   > Windows only reads PATH when a shell (or an app like VS Code) starts.
+   > If `where.exe rtl_test` prints nothing, you're in an old shell — close
+   > it and open a fresh one. Same for VS Code: quit it entirely (not just
+   > the window) so its integrated terminal picks up the new PATH.
+
+4. **Replace the USB driver with Zadig** — Windows installs a TV-tuner
+   driver by default, and no SDR tool can talk to the dongle that way.
+   Download **Zadig** from <https://zadig.akeo.ie/>:
+   - Plug the dongle in.
+   - In Zadig: **Options → List All Devices**.
+   - From the dropdown pick **Bulk-In, Interface (Interface 0)** — *not*
+     "RTL2832U" alone.
+   - Confirm the target driver is **WinUSB**, then click **Replace Driver**.
+   - Unplug and re-plug the dongle.
+
+   You only ever do this once per dongle per machine.
 
 ### Linux only — let normal users touch the dongle
 
@@ -141,6 +193,15 @@ rtl_ais -h 127.0.0.1 -P 10110
    That command tunes both AIS channels (161.975 & 162.025 MHz), decodes them,
    and fires the NMEA sentences at SDR Kid.
 
+   Prefer to run it from anywhere? Add it to your user PATH once:
+
+   ```powershell
+   $ais = 'C:\ais-catcher'
+   [Environment]::SetEnvironmentVariable('Path',
+     ([Environment]::GetEnvironmentVariable('Path','User') + ";$ais"), 'User')
+   $env:Path += ";$ais"
+   ```
+
 *Option B — `rtl-ais` Windows build.*
 1. Download the prebuilt Windows binary from
    <https://github.com/dgiardini/rtl-ais/releases> (the `rtl-ais-win.zip` asset).
@@ -188,6 +249,7 @@ sdr_kid/
   progress.py       <- your quests / achievements
   logbook.py        <- SQLite aircraft logbook + watchlist
   alerts.py         <- background ISS/NOAA overhead alerts
+  deps.py           <- OS-aware external-tool detection + install hints
   modes/
     fm.py           <- FM radio
     atc.py          <- Air Traffic Control
@@ -220,15 +282,41 @@ Tests fake the dongle so they work anywhere.
 
 ## Troubleshooting
 
+**Everyone**
 - **"no supported devices found"** — the driver can't see the dongle. Run
   `rtl_test`. On Linux, make sure you did the blacklist step above.
-- **No sound in FM mode** — check your speakers 🙂 or run
-  `play -n synth 1 sine 440` to test SoX.
+- **No sound in FM mode** — check your speakers 🙂 or (Linux/macOS) run
+  `play -n synth 1 sine 440` to test SoX. Windows: `sox -n -d synth 1 sine 440`.
 - **"pyrtlsdr not usable"** — `pip install pyrtlsdr` inside your venv, and
   make sure `librtlsdr` is installed system-wide.
 - **Menu keys don't move** — you're probably running in a plain Windows
   CMD window without ANSI. Use Windows Terminal or the VS Code integrated
   terminal.
+
+**Windows-specific**
+- **`rtl_test.exe is not recognized`** — PATH not set (or you're in an old
+  PowerShell window that captured the old PATH). Close & reopen PowerShell,
+  or `$env:Path += ";C:\Users\bader\radio\rtl-sdr-64bit-20260816"` in the
+  current session. See the Windows install block above for the persistent
+  one-liner.
+- **`usb_open error -3`** — Windows still has the TV-tuner driver on the
+  dongle. Run **Zadig** (see step 4 of the Windows install) and bind the
+  "Bulk-In, Interface (Interface 0)" entry to **WinUSB**.
+- **`cb transfer status: 5, canceling ... RTLSDR: lost device`** — the
+  dongle was pulled out from under whatever program was using it, usually
+  because another process opened it in the meantime. Only **one** program
+  can own the RTL-SDR at a time. Kill any leftover `AIS-catcher.exe`,
+  `rtl_fm.exe`, `SDRSharp.exe` in Task Manager and try again.
+- **SDR Kid's dongle probe fails but AIS-catcher works** — that's expected
+  when AIS-catcher is already running. SDR Kid will now continue in
+  "soft-warn" mode; pick **Track ships** and it'll read the NMEA feed over
+  UDP. To skip the probe entirely: `python -m sdr_kid --skip-dongle`.
+- **Prefer USB-2 ports (black) over USB-3 (blue)** — USB-3 hubs on many
+  laptops generate RF noise that clobbers weak signals; the dongle also
+  seems to disconnect less on USB-2.
+
+Every error panel now includes an OS-specific install command (thanks to
+`sdr_kid/deps.py`), so you should rarely need to guess what's missing.
 
 ## How I built this
 

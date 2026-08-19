@@ -24,12 +24,14 @@ def _detect_via_rtl_test() -> DongleInfo:
     exe = _which("rtl_test")
     if not exe:
         return DongleInfo(False, reason="rtl_test not on PATH")
+    # `-s 250000 -n 4096` reads a tiny sample (~15ms) instead of the default
+    # 5-second stress test that plain `-t` runs.
     try:
         proc = subprocess.run(
-            [exe, "-t"],
+            [exe, "-s", "250000", "-n", "4096"],
             capture_output=True,
             text=True,
-            timeout=6,
+            timeout=3,
         )
     except subprocess.TimeoutExpired:
         return DongleInfo(False, reason="rtl_test timed out")
@@ -81,34 +83,26 @@ def probe() -> DongleInfo:
     return _detect_via_pyrtlsdr()
 
 
-def wait_for_dongle(console: Console, timeout: float = 120.0) -> DongleInfo:
-    console.print(
-        Panel(
-            "[bold]Plug in your SDR dongle now[/]\n\n"
-            "1. Push the USB dongle into the computer.\n"
-            "2. Screw the antenna onto the little gold connector.\n"
-            "3. Point the antenna up — sky = better signal.\n\n"
-            "[dim]We'll keep looking for the dongle for up to 2 minutes.[/]",
-            title="[cyan]:satellite_antenna: Connect your radio[/]",
-            border_style="cyan",
-        )
-    )
+def wait_for_dongle(console: Console, timeout: float = 8.0) -> DongleInfo:
+    """Poll for the dongle for up to `timeout` seconds. Silent unless it
+    takes more than one probe."""
     deadline = time.time() + timeout
+    first = probe()
+    if first.present or timeout <= 0:
+        return first
     with Progress(
         SpinnerColumn(style="cyan"),
-        TextColumn("[cyan]looking for dongle... {task.description}"),
+        TextColumn("[cyan]waiting for dongle (Ctrl+C to skip)…"),
         transient=True,
         console=console,
     ) as prog:
-        task = prog.add_task("probing")
+        prog.add_task("probing")
         while time.time() < deadline:
+            time.sleep(1.0)
             info = probe()
             if info.present:
-                prog.update(task, description="[green]found![/]")
                 return info
-            prog.update(task, description="not yet — plug it in and press USB firmly")
-            time.sleep(1.5)
-    return DongleInfo(False, reason="timed out waiting for dongle")
+    return first  # keep original reason for the caller's error message
 
 
 def show_dongle_card(console: Console, info: DongleInfo) -> None:
