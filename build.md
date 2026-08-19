@@ -193,6 +193,94 @@ then add one line to `MENU` in `app.py`. That's the whole extension surface.
   once. To "see" a 20 MHz band we retune between reads and stitch the
   answers together. It's not fast, but it's honest.
 
+## Three more modes you could build (and how they'd work)
+
+These aren't in the code yet — they're the natural next step if you want more.
+Each one gives a kid a totally different feel for what "radio" means.
+
+### APRS — the ham-radio SMS network
+
+**What it is.** Licensed amateur-radio operators broadcast tiny position
+packets and short text messages over FM, mostly on **144.390 MHz** in the
+Americas and **144.800 MHz** in Europe. Cars, weather stations, high-altitude
+balloons, and ham handhelds all appear on the same shared channel. You can
+see them all live at [aprs.fi](https://aprs.fi/).
+
+**How to build it.**
+1. `rtl_fm -f 144390000 -M fm -s 22050 -r 22050 -` piping into
+   [`direwolf`](https://github.com/wb2osz/direwolf) (a software TNC that
+   demodulates AX.25 packets from the audio).
+2. Point direwolf's KISS TCP output at Python (`aprslib` parses the packets
+   into `{from, lat, lon, comment}` dicts).
+3. Feed those into folium — same map machinery `planes.py` uses.
+4. Bonus: extend `logbook.py` with an APRS table so kids can see which
+   callsigns they heard, ranked by distance.
+
+**Slots into SDR Kid at:** `sdr_kid/modes/aprs.py`, a new card in
+`MAP_META`, one line in `app.py`'s `MENU`.
+
+**Why a kid loves it.** Every dot on the map is a real person or a real
+weather balloon whose owner you could actually email. It's the internet,
+except it runs on 5-watt radios in someone's backyard.
+
+### FT8 / WSPR — hearing whispers from the other side of the planet
+
+**What it is.** Two "weak-signal" digital modes on the ham HF bands
+(especially **14.074 MHz** for FT8 and **14.0956 MHz** for WSPR). Each
+transmission is essentially a slow beep-boop lasting ~15 seconds (FT8) or
+2 minutes (WSPR). Decoders can pull them out from 20 dB below the noise
+floor. A 1-watt WSPR beacon in Australia is routinely decoded in Norway.
+
+**Complication.** The RTL-SDR only tunes 24 MHz and up (some 500 kHz and up
+with a mod). For HF you need either an **upconverter** (SpyVerter, Ham It
+Up: shifts HF up into RTL-SDR range) or a different SDR (RSP1A, HackRF).
+Worth mentioning to the kid — it's the moment they learn hardware has bands.
+
+**How to build it.**
+1. `rtl_sdr -f 14074000 -s 250000 -n 3750000 out.iq` (15 s of IQ).
+2. Convert to WAV: `sox -t raw -r 12000 -e float -b 32 -c 1 out.iq out.wav`
+   after downsampling. Or use `rx_tools` (`rx_fm` variant) to write WAV directly.
+3. Pass the WAV to **WSJT-X**'s `jt9` / `wsprd` binary, or run
+   [`ft8_lib`](https://github.com/kgoba/ft8_lib) in-process via ctypes.
+4. Show decodes as a scrolling table: `CALL  GRID  SNR  ΔF  Δt`.
+   Compute distance from grid squares → geocode → drop on a folium map.
+
+**Slots into SDR Kid at:** `sdr_kid/modes/ft8.py`. Would want a new
+`iq.py`-style capture helper (they're very time-synchronous — decoding
+happens on 15-second boundaries, so use `datetime` for slot alignment).
+
+**Why a kid loves it.** They receive a signal from Antarctica. On a wire
+antenna. Free. That never gets old.
+
+### POCSAG — the pagers that still won't die
+
+**What it is.** Text-message paging. Runs on FM channels around
+**138–174 MHz** and **929–932 MHz** (varies by country). Hospitals, fire
+departments, industrial alarm systems still use it because it works when
+cell towers don't. Traffic is usually in the clear.
+
+**Legality note.** In most jurisdictions receiving is fine, decoding is
+fine, but *acting on* medical or emergency traffic is not. Include a
+teaching moment about this — it's the ham-radio version of "look but don't
+touch."
+
+**How to build it.**
+1. Find a busy channel with the RF explorer (`explore.py`) — hospitals in
+   many countries sit around 148–153 MHz.
+2. `rtl_fm -f <freq> -s 22050 -M fm -` piped into
+   [`multimon-ng`](https://github.com/EliasOenal/multimon-ng): `multimon-ng -a POCSAG512 -a POCSAG1200 -a POCSAG2400 -f alpha -t raw -`.
+3. Read `multimon-ng`'s stdout line-by-line, parse
+   `POCSAG1200: Address:  1234567  Function: 0  Alpha:   [text]`, render
+   in a live Rich table (scrolling like a chat log).
+4. Bonus: filter by capcode; save to SQLite for later browsing.
+
+**Slots into SDR Kid at:** `sdr_kid/modes/pocsag.py`. Reuse the
+`_audio.AudioChain`-style subprocess piping.
+
+**Why a kid loves it.** Text messages appearing in real time, decoded from
+thin air, on a piece of technology their parents used in 1998. Radio
+archaeology plus live feed.
+
 ## What I'd add next (over to you)
 
 - **NOAA weather satellite APT images** — 137 MHz FM, decode with

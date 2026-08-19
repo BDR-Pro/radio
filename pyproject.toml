@@ -26,7 +26,12 @@ dependencies = [
     "skyfield>=1.48",
     "python-dateutil>=2.9.0",
     "pyais>=3.2.0",
+    "plyer>=2.1.0",
+    "websockets>=12.0",
 ]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0.0"]
 
 [project.scripts]
 sdr-kid = "sdr_kid.app:main"

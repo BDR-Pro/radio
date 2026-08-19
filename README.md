@@ -133,22 +133,42 @@ browser. The maps update automatically.
 
 ```
 sdr_kid/
-  app.py          <- the main menu you see
-  banner.py       <- the ASCII art
-  dongle.py       <- "is the USB stick plugged in?" logic
-  server.py       <- the FastAPI map server
+  app.py            <- the main menu you see
+  banner.py         <- the ASCII art
+  dongle.py         <- "is the USB stick plugged in?" logic
+  server.py         <- the FastAPI map server + live /ws/spectrum
+  progress.py       <- your quests / achievements
+  logbook.py        <- SQLite aircraft logbook + watchlist
+  alerts.py         <- background ISS/NOAA overhead alerts
   modes/
-    fm.py         <- FM radio
-    atc.py        <- Air Traffic Control
-    planes.py     <- ADS-B airplane tracking
-    ships.py      <- AIS ship tracking
-    iss.py        <- International Space Station
-    explore.py    <- RF spectrum sweep
-    _audio.py     <- shared rtl_fm audio pipeline
+    fm.py           <- FM radio
+    atc.py          <- Air Traffic Control
+    planes.py       <- ADS-B airplane tracking + auto-log to logbook
+    ships.py        <- AIS ship tracking (rtl_ais on UDP 10110)
+    iss.py          <- International Space Station
+    explore.py      <- RF spectrum sweep (Rich bars + Textual waterfall)
+    noaa.py         <- NOAA weather-satellite APT image decoder
+    iq.py           <- record & replay raw radio
+    alerts_ui.py    <- overhead-pass alert control panel
+    logbook_ui.py   <- browse your logbook / edit the watchlist
+    _audio.py       <- shared rtl_fm audio pipeline
+    _spectrum.py    <- shared spectrum DSP primitives
+tests/              <- pytest suite (runs with no hardware)
 ```
+
+The live spectrum browser view is at `http://127.0.0.1:8000/live`
+whenever the RF-explorer mode is running.
 
 Open any file in VS Code and read it! Each one is under 200 lines and shows
 you *exactly* how radio + Python fit together.
+
+## Running the tests
+
+```bash
+python -m pytest -q
+```
+
+Tests fake the dongle so they work anywhere.
 
 ## Troubleshooting
 

@@ -8,17 +8,25 @@ from rich.panel import Panel
 
 from sdr_kid.banner import render_banner
 from sdr_kid.dongle import show_dongle_card, wait_for_dongle
-from sdr_kid.modes import atc, explore, fm, iss, planes, ships
+from sdr_kid.modes import (
+    alerts_ui, atc, explore, fm, iq, iss, logbook_ui, noaa, planes, ships,
+)
+from sdr_kid.progress import summary_table
 
 
 MENU = [
-    ("Listen to FM radio (music)",              fm.run),
-    ("Track airplanes on a map",                planes.run),
-    ("Listen to Air Traffic Control",           atc.run),
-    ("Look at the ISS (space station)",         iss.run),
-    ("Track ships on the ocean",                ships.run),
-    ("Explore the RF spectrum",                 explore.run),
-    ("Quit",                                    None),
+    ("Listen to FM radio (music)",          fm.run),
+    ("Track airplanes on a map",            planes.run),
+    ("Listen to Air Traffic Control",       atc.run),
+    ("Look at the ISS (space station)",     iss.run),
+    ("Track ships on the ocean",            ships.run),
+    ("Explore the RF spectrum",             explore.run),
+    ("Catch a NOAA weather-satellite image", noaa.run),
+    ("Overhead alerts (ISS / NOAA)",        alerts_ui.run),
+    ("Airplane logbook + watchlist",        logbook_ui.run),
+    ("Record & replay raw radio (IQ)",      iq.run),
+    ("Show my quests",                      lambda c: c.print(summary_table())),
+    ("Quit",                                None),
 ]
 
 
@@ -29,7 +37,9 @@ HELP = (
     "to your computer. Python then decides what to do with them — turn them into "
     "music, decode a plane's position, or paint a spectrum picture.\n\n"
     "Each menu item is a small Python program that talks to the dongle in a "
-    "different way. Read the source in [magenta]sdr_kid/modes/[/] to see how!"
+    "different way. Read the source in [magenta]sdr_kid/modes/[/] to see how!\n\n"
+    "Everything you do earns [yellow]quests[/] — pick [bold]Show my quests[/] "
+    "to see how far you've come."
 )
 
 
@@ -69,8 +79,8 @@ def main() -> int:
             console.print(
                 Panel(
                     f"[red]No dongle detected.[/] Reason: {info.reason}\n\n"
-                    "You can still use online-only modes (planes, ships, ISS map) — "
-                    "restart with [bold]--skip-dongle[/] to try them.",
+                    "You can still use online-only modes (planes, ships, ISS map, "
+                    "logbook, quests) — restart with [bold]--skip-dongle[/] to try them.",
                     border_style="red",
                     title="[red]no radio yet[/]",
                 )

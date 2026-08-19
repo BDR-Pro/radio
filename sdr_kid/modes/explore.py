@@ -12,7 +12,9 @@ from rich.live import Live
 from rich.panel import Panel
 from rich.text import Text
 
+from sdr_kid import progress as achievements
 from sdr_kid.modes._spectrum import BANDS, Sweep, color_for, make_sdr, normalize, sweep
+from sdr_kid.server import BUS, get_server
 
 
 BAR_CHARS = " ▁▂▃▄▅▆▇█"
@@ -79,11 +81,13 @@ def _run_rich(console: Console, name: str, lo: int, hi: int) -> None:
     except Exception as exc:
         console.print(Panel(f"[red]could not open dongle: {exc}[/]"))
         return
+    get_server()  # ensure the WS server is running so /live works
     latest: Optional[Sweep] = None
     try:
         with Live(_render_bars(name, lo, hi, latest), console=console, refresh_per_second=4) as live:
             while True:
                 latest = sweep(sdr, lo, hi)
+                BUS.publish(latest.freqs_hz, latest.powers_db)
                 live.update(_render_bars(name, lo, hi, latest))
                 time.sleep(0.3)
     except KeyboardInterrupt:
@@ -235,6 +239,7 @@ def _run_textual(name: str, lo: int, hi: int) -> None:
         def _absorb(self, sw: Sweep) -> None:
             self.query_one("#fall", Waterfall).push(sw.powers_db)
             self.query_one("#peak", PeakBar).latest = sw
+            BUS.publish(sw.freqs_hz, sw.powers_db)
 
         def action_band(self, idx: int) -> None:
             if 0 <= idx < len(BANDS):
@@ -263,6 +268,9 @@ def run(console: Console) -> None:
     if picked is None:
         return
     name, lo, hi = picked
+    server = get_server()
+    console.print(f"[dim]live browser view: {server.url}/live[/]")
+    achievements.celebrate(console, achievements.record("spectrum_swept"))
     if not sys.stdout.isatty():
         console.print("[dim]no interactive TTY — using Rich fallback[/]")
         _run_rich(console, name, lo, hi)

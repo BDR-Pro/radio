@@ -8,6 +8,7 @@ from rich.live import Live
 from rich.panel import Panel
 from rich.table import Table
 
+from sdr_kid import progress as achievements
 from sdr_kid.modes._audio import AudioChain
 
 
@@ -70,6 +71,7 @@ def run(console: Console) -> None:
         return
     chain.start()
     started = time.time()
+    achievements.celebrate(console, achievements.record("atc_played"))
     try:
         with Live(_panel(freq, label, started), console=console, refresh_per_second=2) as live:
             while True:

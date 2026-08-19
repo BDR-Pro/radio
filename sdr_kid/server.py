@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import asyncio
+import json
 import threading
+import time
+from collections import deque
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Deque, Dict, List, Optional
 
-from fastapi import FastAPI
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -32,7 +36,143 @@ MAP_META: Dict[str, Dict[str, str]] = {
         "blurb": "Where the ISS is right now, and how far it is from you. Point your antenna up when it's overhead!",
         "accent": "#ffcc00",
     },
+    "noaa.html": {
+        "title": "NOAA weather image",
+        "emoji": "🌩️",
+        "blurb": "The most recent APT picture your dongle decoded from a NOAA satellite pass.",
+        "accent": "#a1ff8e",
+    },
+    "live.html": {
+        "title": "Live spectrum",
+        "emoji": "📈",
+        "blurb": "Realtime spectrum + waterfall streamed from your dongle over WebSocket.",
+        "accent": "#ff85d1",
+    },
 }
+
+
+# --- shared spectrum broadcast state -------------------------------------------
+
+
+class SpectrumBus:
+    """Thread-safe fan-out of the latest spectrum frames to WebSocket clients."""
+
+    def __init__(self, history: int = 200):
+        self._lock = threading.Lock()
+        self._history: Deque[dict] = deque(maxlen=history)
+        self._subscribers: List[asyncio.Queue] = []
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
+
+    def bind_loop(self, loop: asyncio.AbstractEventLoop) -> None:
+        self._loop = loop
+
+    def publish(self, freqs_hz: List[int], powers_db: List[float]) -> None:
+        frame = {"ts": time.time(),
+                 "freqs": [int(f) for f in freqs_hz],
+                 "powers": [float(p) for p in powers_db]}
+        with self._lock:
+            self._history.append(frame)
+            subs = list(self._subscribers)
+            loop = self._loop
+        if loop is None:
+            return
+        for q in subs:
+            try:
+                loop.call_soon_threadsafe(q.put_nowait, frame)
+            except Exception:
+                pass
+
+    def subscribe(self) -> asyncio.Queue:
+        q: asyncio.Queue = asyncio.Queue(maxsize=32)
+        with self._lock:
+            self._subscribers.append(q)
+            for frame in list(self._history)[-20:]:
+                try: q.put_nowait(frame)
+                except Exception: break
+        return q
+
+    def unsubscribe(self, q: asyncio.Queue) -> None:
+        with self._lock:
+            if q in self._subscribers:
+                self._subscribers.remove(q)
+
+
+BUS = SpectrumBus()
+
+
+LIVE_PAGE = """<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SDR Kid · live spectrum</title>
+<style>
+  body{margin:0;background:#0b1020;color:#e7ecff;font-family:system-ui,sans-serif}
+  header{padding:14px 20px;background:#182349;display:flex;gap:16px;align-items:center;
+         justify-content:space-between}
+  header a{color:#6ee7ff;text-decoration:none}
+  h1{margin:0;font-size:18px}
+  .meta{color:#98a3c9;font-size:13px}
+  #wrap{padding:16px 20px;display:grid;gap:16px}
+  canvas{width:100%;background:#050818;border-radius:12px;display:block}
+  .peak{color:#ffd166;font-weight:600}
+  .status{font-family:monospace}
+  footer{color:#98a3c9;font-size:12px;padding:12px 20px;text-align:center}
+</style></head>
+<body>
+<header>
+  <div><a href="/">&larr; SDR Kid</a> · <h1 style="display:inline">Live spectrum</h1></div>
+  <div class="meta">frames <span id="n">0</span> · peak <span class="peak" id="peak">—</span></div>
+</header>
+<div id="wrap">
+  <canvas id="waterfall" width="1024" height="360"></canvas>
+  <canvas id="bars"      width="1024" height="120"></canvas>
+</div>
+<footer>WebSocket stream from <code>/ws/spectrum</code>. Start the RF explorer in the terminal to feed this page.</footer>
+<script>
+const wf   = document.getElementById('waterfall').getContext('2d');
+const bars = document.getElementById('bars').getContext('2d');
+const N    = document.getElementById('n');
+const PEAK = document.getElementById('peak');
+let frames = 0;
+function colorFor(n){
+  const stops=[[0,[10,20,60]],[0.25,[30,80,200]],[0.5,[0,200,200]],[0.75,[255,220,60]],[1,[255,60,60]]];
+  for(let i=1;i<stops.length;i++){
+    if(n<=stops[i][0]){const t=(n-stops[i-1][0])/(stops[i][0]-stops[i-1][0]);
+      const a=stops[i-1][1],b=stops[i][1];
+      return `rgb(${a[0]+(b[0]-a[0])*t|0},${a[1]+(b[1]-a[1])*t|0},${a[2]+(b[2]-a[2])*t|0})`;}
+  } return 'white';
+}
+function drawFrame(frame){
+  const {freqs, powers} = frame;
+  if(!powers.length) return;
+  const w = 1024, h = 360;
+  // scroll waterfall down by 1 px
+  const img = wf.getImageData(0,0,w,h-1);
+  wf.putImageData(img,0,1);
+  const lo = Math.min(...powers), hi = Math.max(...powers), span = Math.max(hi-lo,1);
+  for(let x=0;x<w;x++){
+    const i = Math.floor(x*powers.length/w);
+    const n = (powers[i]-lo)/span;
+    wf.fillStyle = colorFor(n);
+    wf.fillRect(x,0,1,1);
+  }
+  // bars
+  bars.clearRect(0,0,w,120);
+  for(let x=0;x<w;x++){
+    const i=Math.floor(x*powers.length/w);
+    const n=(powers[i]-lo)/span;
+    bars.fillStyle=colorFor(n);
+    bars.fillRect(x,120-n*118,1,n*118);
+  }
+  const peakIdx=powers.reduce((a,_,i,arr)=>arr[i]>arr[a]?i:a,0);
+  PEAK.textContent = `${(freqs[peakIdx]/1e6).toFixed(3)} MHz  ${powers[peakIdx].toFixed(1)} dB`;
+  N.textContent = ++frames;
+}
+const ws = new WebSocket(`ws://${location.host}/ws/spectrum`);
+ws.onmessage = ev => drawFrame(JSON.parse(ev.data));
+ws.onopen  = ()=> PEAK.textContent = 'connected';
+ws.onclose = ()=> PEAK.textContent = 'disconnected';
+</script>
+</body></html>"""
 
 
 INDEX_CSS = """
@@ -157,12 +297,38 @@ def _render_index() -> str:
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="SDR Kid map server", docs_url=None, redoc_url=None)
+    from contextlib import asynccontextmanager
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        BUS.bind_loop(asyncio.get_running_loop())
+        yield
+
+    app = FastAPI(title="SDR Kid map server", docs_url=None, redoc_url=None, lifespan=lifespan)
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
     @app.get("/", response_class=HTMLResponse)
     def index() -> HTMLResponse:
+        # ensure live.html shows up on the dashboard as a virtual card
+        (STATIC_DIR / "live.html").write_text(LIVE_PAGE)
         return HTMLResponse(_render_index())
+
+    @app.get("/live", response_class=HTMLResponse)
+    def live() -> HTMLResponse:
+        return HTMLResponse(LIVE_PAGE)
+
+    @app.websocket("/ws/spectrum")
+    async def ws_spectrum(ws: WebSocket) -> None:
+        await ws.accept()
+        q = BUS.subscribe()
+        try:
+            while True:
+                frame = await q.get()
+                await ws.send_text(json.dumps(frame))
+        except WebSocketDisconnect:
+            pass
+        finally:
+            BUS.unsubscribe(q)
 
     @app.get("/view/{name}", response_class=HTMLResponse)
     def view(name: str) -> HTMLResponse:

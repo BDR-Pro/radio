@@ -14,6 +14,7 @@ from rich.live import Live
 from rich.panel import Panel
 from rich.table import Table
 
+from sdr_kid import progress as achievements
 from sdr_kid.modes._audio import AudioChain
 from sdr_kid.server import get_server, write_static
 
@@ -188,6 +189,7 @@ def run(console: Console) -> None:
         except Exception as exc:
             console.print(Panel(f"[red]could not compute passes: {exc}[/]"))
             return
+        achievements.celebrate(console, achievements.record("iss_pass_listed"))
         console.print(_pass_table(passes))
         console.print(
             "[dim]tip: point your antenna up as the ISS rises. VHF signals like "
@@ -212,6 +214,7 @@ def run(console: Console) -> None:
             )
         )
         chain.start()
+        achievements.celebrate(console, achievements.record("iss_tuned"))
         try:
             while True:
                 time.sleep(1)
@@ -222,6 +225,7 @@ def run(console: Console) -> None:
         return
 
     opened = False
+    achievements.celebrate(console, achievements.record("iss_map_opened"))
     try:
         with Live(console=console, refresh_per_second=1) as live:
             while True:

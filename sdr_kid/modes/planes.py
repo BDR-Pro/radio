@@ -13,6 +13,7 @@ from rich.live import Live
 from rich.panel import Panel
 from rich.table import Table
 
+from sdr_kid import logbook, progress
 from sdr_kid.server import get_server, write_static
 
 
@@ -185,9 +186,31 @@ def run(console: Console) -> None:
                 except Exception as exc:
                     live.update(Panel(f"[red]OpenSky error:[/] {exc}"))
                 else:
+                    sightings = [
+                        logbook.Sighting(
+                            icao=p.icao, callsign=p.callsign, country=p.country,
+                            alt_m=p.alt_m, speed_kt=(p.speed_ms * 1.944) if p.speed_ms else None,
+                        )
+                        for p in planes if p.icao
+                    ]
+                    new_count = logbook.record_batch(sightings)
+                    hits = logbook.watchlist_hits(sightings)
+                    if planes:
+                        progress.celebrate(console, progress.record("plane_seen", amount=len(planes)))
                     html = _build_map(planes, lat, lon)
                     write_static("planes.html", html)
-                    live.update(_table(planes))
+                    body = _table(planes)
+                    if new_count:
+                        console.print(f"[dim]logbook: +{new_count} new aircraft (total {logbook.stats()['aircraft']})[/]")
+                    if hits:
+                        alert = "\n".join(
+                            f":rotating_light: [bold red]{pat}[/] — {s.callsign or s.icao} "
+                            f"(alt {int((s.alt_m or 0)*3.281):,} ft){' — ' + note if note else ''}"
+                            for pat, note, s in hits
+                        )
+                        console.print(Panel(alert, border_style="red", title="[red]watchlist hit[/]"))
+                        progress.celebrate(console, progress.record("watchlist_hit", amount=len(hits)))
+                    live.update(body)
                     if not opened:
                         try:
                             webbrowser.open(f"{server.url}/view/planes.html")

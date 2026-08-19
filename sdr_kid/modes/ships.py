@@ -13,6 +13,7 @@ from rich.live import Live
 from rich.panel import Panel
 from rich.table import Table
 
+from sdr_kid import progress as achievements
 from sdr_kid.server import get_server, write_static
 
 
@@ -240,6 +241,7 @@ def run(console: Console) -> None:
 
     opened = False
     last_map = 0.0
+    _celebrated: Dict[str, bool] = {}
     try:
         with Live(console=console, refresh_per_second=2) as live:
             while True:
@@ -252,6 +254,9 @@ def run(console: Console) -> None:
                         border_style="yellow",
                     ))
                 else:
+                    if listener.ships and listener.rx_count > 0 and not _celebrated.get("ship_seen"):
+                        achievements.celebrate(console, achievements.record("ship_seen", amount=len(listener.ships)))
+                        _celebrated["ship_seen"] = True
                     live.update(_table(listener))
                     if now - last_map > 10:
                         html = _build_map(listener)
