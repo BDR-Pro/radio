@@ -75,11 +75,11 @@ class AudioChain:
             ]
             # `-d` (default device) requires $AUDIODEV set on Windows and
             # commonly errors with "no default audio device configured".
-            # Naming the driver explicitly always works.
+            # Naming both the driver and the device explicitly always works.
             if sys.platform == "win32":
-                cmd += ["-t", "waveaudio", "-d"]
+                cmd += ["-t", "waveaudio", "default"]
             elif sys.platform == "darwin":
-                cmd += ["-t", "coreaudio", "-d"]
+                cmd += ["-t", "coreaudio", "default"]
             else:
                 cmd += ["-d"]     # ALSA on Linux; SoX finds it fine.
             return cmd

@@ -192,17 +192,40 @@ def _build_map(listener: AISListener) -> Optional[str]:
     return m.get_root().render()
 
 
-HOW_TO_INSTALL = (
-    "SDR Kid listens for AIS on [bold]UDP :{port}[/]. Nothing is talking yet.\n\n"
-    "In another terminal, run one of these:\n"
-    "  [cyan]rtl_ais -h 127.0.0.1 -P {port}[/]         # needs `rtl-ais` installed\n"
-    "  [cyan]aisdecoder -h 127.0.0.1 -p {port} ...[/]  # alternative\n\n"
-    "rtl-ais install:\n"
-    "  Ubuntu/Pi:  [cyan]git clone https://github.com/dgiardini/rtl-ais && cd rtl-ais && make && sudo make install[/]\n"
-    "  macOS:      [cyan]brew install rtl-ais[/]\n\n"
+HOW_TO_INSTALL_UNIX = (
+    "SDR Kid is listening on [bold]UDP :{port}[/]. Nothing has arrived yet.\n\n"
+    "In another terminal, run:\n"
+    "  [cyan]rtl_ais -h 127.0.0.1 -P {port}[/]\n\n"
+    "Install rtl-ais:\n"
+    "  [cyan]sudo apt install rtl-ais[/]     # Ubuntu / Debian / Raspberry Pi\n"
+    "  [cyan]brew install rtl-ais[/]         # macOS\n\n"
     "AIS runs on 161.975 MHz and 162.025 MHz — you need to be within about 40 km\n"
-    "of the coast, or ~10 km of a river, for a normal whip antenna to hear ships."
+    "of a coast, or ~10 km of a river, for a normal whip antenna to hear ships."
 )
+
+HOW_TO_INSTALL_WINDOWS = (
+    "SDR Kid is listening on [bold]UDP :{port}[/]. Nothing has arrived yet.\n\n"
+    "In a [bold]second[/] PowerShell window, run:\n"
+    "  [cyan].\\AIS-catcher.exe -u 127.0.0.1 {port}[/]\n\n"
+    "If that says '[dim]Address already in use[/]' — kill any older AIS-catcher.exe\n"
+    "in Task Manager first.\n\n"
+    "If it says '[dim]No supported devices found[/]' — another program still owns\n"
+    "the dongle; unplug and replug it.\n\n"
+    "If Windows Defender pops a dialog when AIS-catcher.exe starts, click\n"
+    "[bold]Allow access[/] for Private networks.\n\n"
+    "Install AIS-catcher: unzip the release from\n"
+    "  https://github.com/jvde-github/AIS-catcher/releases\n"
+    "and add its folder to PATH (or use the one-click installer in the README).\n\n"
+    "AIS runs on 161.975 MHz and 162.025 MHz — you need to be within about 40 km\n"
+    "of a coast, or ~10 km of a river, for a whip antenna to hear ships."
+)
+
+
+def _how_to_install() -> str:
+    from sdr_kid.deps import current_os
+    if current_os() == "windows":
+        return HOW_TO_INSTALL_WINDOWS
+    return HOW_TO_INSTALL_UNIX
 
 
 def run(console: Console) -> None:
@@ -256,7 +279,7 @@ def run(console: Console) -> None:
                 now = time.time()
                 if listener.rx_count == 0:
                     live.update(Panel(
-                        HOW_TO_INSTALL.format(port=port),
+                        _how_to_install().format(port=port),
                         title="[yellow]waiting for AIS…[/]",
                         border_style="yellow",
                     ))

@@ -43,3 +43,15 @@ def test_doctor_runs_and_produces_output():
     assert r.returncode in (0, 1)
     assert "health check" in r.stdout.lower()
     assert "pass" in r.stdout.lower() or "fail" in r.stdout.lower()
+
+
+def test_test_audio_prints_a_helpful_message():
+    r = subprocess.run(
+        [sys.executable, "-m", "sdr_kid", "--test-audio"],
+        capture_output=True, text=True, timeout=15,
+    )
+    # exit code 0 = worked (sox present + audio device), 1 = sox missing or
+    # driver rejected — either produces a message about SoX in stdout.
+    assert r.returncode in (0, 1)
+    combined = (r.stdout + r.stderr).lower()
+    assert "sox" in combined or "440" in combined

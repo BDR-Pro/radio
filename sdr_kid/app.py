@@ -159,6 +159,9 @@ def _parse_args(argv: List[str]) -> argparse.Namespace:
     p.add_argument("--doctor", action="store_true",
                    help="run a health check — Python packages, external tools, "
                         "dongle, ports, disk — and print exactly what's missing")
+    p.add_argument("--test-audio", action="store_true",
+                   help="play a 1-second beep through SoX to prove your speakers "
+                        "and driver are wired up (independent of the dongle)")
     p.add_argument("--version", action="version", version=f"sdr-kid {__version__}")
     return p.parse_args(argv)
 
@@ -178,6 +181,41 @@ def main() -> int:
         results = run_all()
         render(console, results)
         return 0 if not any(r.status == "fail" for r in results) else 1
+
+    if args.test_audio:
+        import subprocess
+        from sdr_kid.deps import SOX, which
+        if which("sox") is None:
+            from rich.panel import Panel
+            from sdr_kid.deps import require
+            console.print(Panel(require(SOX), border_style="red",
+                                title="[red]SoX missing[/]"))
+            return 1
+        cmd = [which("sox"), "-n"]
+        if sys.platform == "win32":
+            cmd += ["-t", "waveaudio", "default"]
+        elif sys.platform == "darwin":
+            cmd += ["-t", "coreaudio", "default"]
+        else:
+            cmd += ["-d"]
+        cmd += ["synth", "1", "sine", "440"]
+        console.print(f"[dim]running: {' '.join(cmd)}[/]")
+        console.print("[cyan]:speaker: playing a 1-second 440 Hz tone…[/]")
+        try:
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+        except Exception as exc:
+            console.print(f"[red]sox crashed: {exc}[/]")
+            return 1
+        if r.returncode != 0:
+            from rich.panel import Panel
+            console.print(Panel(
+                (r.stderr or r.stdout or "unknown error").strip() +
+                "\n\n[dim]If SoX says 'no default audio device configured', your SoX "
+                "build is too old. Reinstall from sourceforge.net/projects/sox.[/]",
+                title="[red]SoX rejected the request[/]", border_style="red"))
+            return 1
+        console.print("[green]:thumbsup: SoX + your speakers work. FM and ATC will play.[/]")
+        return 0
 
     from rich.panel import Panel
     from sdr_kid.banner import render_banner

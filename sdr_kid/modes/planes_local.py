@@ -229,11 +229,29 @@ def run(console: Console) -> None:
     server = get_server()
     opened = False
     last_map = 0.0
+    connected_at = time.time()
     try:
         with Live(_table(client), console=console, refresh_per_second=2) as live:
             while client.connected:
                 client.poll()
                 now = time.time()
+                # If we've been connected 15s with zero messages, help.
+                if client.msg_count == 0 and now - connected_at > 15:
+                    live.update(Panel(
+                        "[yellow]Connected to dump1090 but no ADS-B messages yet.[/]\n\n"
+                        "Common reasons:\n"
+                        "  • Your antenna is a stubby whip indoors — 1090 MHz needs "
+                        "line-of-sight to planes. Try a window or the roof.\n"
+                        "  • No planes overhead right now. Check "
+                        "[cyan]https://flightradar24.com[/] to see if any are nearby.\n"
+                        "  • dump1090 was started without --net. It needs to expose "
+                        "port 30003. Restart it like:\n"
+                        "        [cyan]dump1090.exe --net --gain -10[/]      (Windows)\n"
+                        "        [cyan]dump1090 --net --gain -10[/]           (Linux/macOS)\n"
+                        "  • Gain too low. Try [cyan]--gain 40[/] instead of auto.",
+                        title="[yellow]:mag: still listening…[/]",
+                        border_style="yellow",
+                    ))
                 if now - last_map > 5:
                     fresh = _fresh(client.planes)
                     sightings = [
