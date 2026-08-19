@@ -15,6 +15,7 @@ from rich.panel import Panel
 from rich.table import Table
 
 from sdr_kid import progress as achievements
+from sdr_kid.location import ask as ask_home
 from sdr_kid.modes._audio import AudioChain
 from sdr_kid.server import get_server, write_static
 
@@ -136,29 +137,6 @@ def _pass_table(passes: List[Pass]) -> Table:
     return table
 
 
-def _ask_home() -> Optional[tuple[float, float]]:
-    presets = {
-        "Riyadh":  (24.7136, 46.6753),
-        "London":  (51.5074, -0.1278),
-        "New York":(40.7128, -74.0060),
-        "Tokyo":   (35.6762, 139.6503),
-    }
-    ans = questionary.select(
-        "Where are you standing?",
-        choices=list(presets.keys()) + ["Custom coordinates", "Cancel"],
-    ).ask()
-    if not ans or ans == "Cancel":
-        return None
-    if ans == "Custom coordinates":
-        lat = questionary.text("Latitude:").ask()
-        lon = questionary.text("Longitude:").ask()
-        try:
-            return float(lat), float(lon)
-        except (TypeError, ValueError):
-            return None
-    return presets[ans]
-
-
 def _ask_action() -> str:
     return questionary.select(
         "What do you want to do?",
@@ -172,7 +150,7 @@ def _ask_action() -> str:
 
 
 def run(console: Console) -> None:
-    home = _ask_home()
+    home = ask_home(console)
     if home is None:
         return
     lat, lon = home

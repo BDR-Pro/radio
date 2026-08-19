@@ -126,3 +126,8 @@ def celebrate(console: Console, unlocked: List[Quest]) -> None:
         return
     body = "\n".join(f":sparkles:  [bold yellow]{q.title}[/] — {q.hint}" for q in unlocked)
     console.print(Panel(body, title="[yellow]:trophy: quest unlocked![/]", border_style="yellow"))
+
+
+def _show_quests_from_menu(console: Console) -> None:
+    """Menu-invoked entrypoint (declared in sdr_kid.app.MENU)."""
+    console.print(summary_table())

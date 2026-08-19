@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import time
-from pathlib import Path
-from typing import Optional
 
 import questionary
 from rich.console import Console
@@ -10,62 +8,8 @@ from rich.live import Live
 from rich.panel import Panel
 from rich.table import Table
 
-from sdr_kid.alerts import AlertService, format_alert, next_passes
-
-
-HOME_FILE = Path.home() / ".sdr_kid_home.json"
-
-
-def _remember_home(lat: float, lon: float) -> None:
-    import json
-    HOME_FILE.write_text(json.dumps({"lat": lat, "lon": lon}))
-
-
-def _recall_home() -> Optional[tuple]:
-    import json
-    if not HOME_FILE.exists():
-        return None
-    try:
-        d = json.loads(HOME_FILE.read_text())
-        return float(d["lat"]), float(d["lon"])
-    except Exception:
-        return None
-
-
-def _ask_home(console: Console) -> Optional[tuple]:
-    remembered = _recall_home()
-    presets = {
-        "Riyadh":   (24.7136, 46.6753),
-        "London":   (51.5074, -0.1278),
-        "New York": (40.7128, -74.0060),
-        "Tokyo":    (35.6762, 139.6503),
-    }
-    if remembered:
-        keep = questionary.select(
-            f"use your saved location ({remembered[0]:.2f}, {remembered[1]:.2f})?",
-            choices=["yes", "pick another", "cancel"],
-        ).ask()
-        if keep == "yes":
-            return remembered
-        if keep in (None, "cancel"):
-            return None
-    ans = questionary.select(
-        "where are you standing?",
-        choices=list(presets.keys()) + ["custom coordinates", "cancel"],
-    ).ask()
-    if not ans or ans == "cancel":
-        return None
-    if ans == "custom coordinates":
-        lat = questionary.text("latitude:").ask()
-        lon = questionary.text("longitude:").ask()
-        try:
-            home = (float(lat), float(lon))
-        except (TypeError, ValueError):
-            return None
-    else:
-        home = presets[ans]
-    _remember_home(*home)
-    return home
+from sdr_kid.alerts import AlertService, next_passes
+from sdr_kid.location import ask as ask_home
 
 
 def _upcoming_table(passes) -> Table:
@@ -87,7 +31,7 @@ def _upcoming_table(passes) -> Table:
 
 
 def run(console: Console) -> None:
-    home = _ask_home(console)
+    home = ask_home(console)
     if home is None:
         return
     lat, lon = home

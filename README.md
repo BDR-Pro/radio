@@ -18,6 +18,46 @@ opens live maps in your browser (FastAPI + Folium).
 
 ---
 
+---
+
+## 🚀 Windows? Use the one-click installer.
+
+Skip all the manual steps below — this PowerShell script downloads
+rtl-sdr, SoX, AIS-catcher, dump1090, noaa-apt, and Zadig, unzips them
+under `%USERPROFILE%\sdr-kid-tools\`, and adds each folder to your PATH.
+No admin needed.
+
+Copy-paste this into **PowerShell**:
+
+```powershell
+irm https://raw.githubusercontent.com/BDR-Pro/radio/main/scripts/install-windows.ps1 | iex
+```
+
+The script:
+- Downloads and extracts every command-line tool SDR Kid can use.
+- Adds each folder to your **User** PATH permanently.
+- Runs the SoX GUI installer for you (accept the default path).
+- Downloads Zadig and tells you exactly what to click to swap the USB driver.
+
+Then close and re-open PowerShell (Windows only reads PATH at shell
+startup), and follow steps 1 → 2 → 3 → 5 below (skip step 4 — the
+script did it).
+
+Options — pass flags by downloading first, then running:
+
+```powershell
+# save the script locally
+irm https://raw.githubusercontent.com/BDR-Pro/radio/main/scripts/install-windows.ps1 -OutFile install.ps1
+
+# see what it WOULD do (no changes)
+powershell -ExecutionPolicy Bypass -File .\install.ps1 -DryRun
+
+# skip Zadig if you already ran it once
+powershell -ExecutionPolicy Bypass -File .\install.ps1 -SkipZadig
+```
+
+---
+
 ## 1. Grab the code
 
 Open **Visual Studio Code**, then open a terminal (`Ctrl + \`` or `View → Terminal`) and run:
@@ -69,10 +109,62 @@ brew install librtlsdr sox rtl-ais
 ```
 
 **Windows:**
-- Download the RTL-SDR drivers from https://www.rtl-sdr.com/ (follow the
-  Zadig install page — this replaces Windows' built-in TV driver so your
-  Python code can talk to the dongle).
-- Install SoX from https://sox.sourceforge.net/ and add it to your PATH.
+
+Windows needs three things: the RTL-SDR tools, SoX (for audio), and the
+right USB driver. All three follow the same *download → unzip → add to
+PATH* pattern.
+
+1. **RTL-SDR tools** — download the zip from
+   <https://ftp.osmocom.org/binaries/windows/rtl-sdr/> (grab
+   `rtl-sdr-64bit-*.zip`). Unzip somewhere permanent, e.g.
+   `C:\Users\<you>\radio\rtl-sdr-64bit-20260816\`.
+2. **SoX** — install from <https://sourceforge.net/projects/sox/> (default
+   install path is `C:\Program Files (x86)\sox-14-4-2\`).
+3. **Add both folders to your user PATH.** Open **PowerShell** and paste
+   this (adjust the two paths at the top to match yours):
+
+   ```powershell
+   $folders = @(
+     'C:\Users\bader\radio\rtl-sdr-64bit-20260816',
+     'C:\Program Files (x86)\sox-14-4-2'
+   )
+   $old = [Environment]::GetEnvironmentVariable('Path','User')
+   foreach ($f in $folders) {
+     if (-not ($old.Split(';') -contains $f)) {
+       $old = "$old;$f"
+       Write-Host "added $f"
+     }
+     $env:Path += ";$f"   # also apply to THIS shell
+   }
+   [Environment]::SetEnvironmentVariable('Path', $old, 'User')
+   ```
+
+   That's a **one-time** step — it survives reboots and applies to
+   every new PowerShell / VS Code terminal you open. Verify with:
+
+   ```powershell
+   where.exe rtl_test        # should print the .exe's full path
+   where.exe sox             # same
+   rtl_test.exe -t           # should print "Found Rafael Micro R820T tuner"
+   ```
+
+   > ⚠️ **After adding to PATH, close and re-open PowerShell / VS Code.**
+   > Windows only reads PATH when a shell (or an app like VS Code) starts.
+   > If `where.exe rtl_test` prints nothing, you're in an old shell — close
+   > it and open a fresh one. Same for VS Code: quit it entirely (not just
+   > the window) so its integrated terminal picks up the new PATH.
+
+4. **Replace the USB driver with Zadig** — Windows installs a TV-tuner
+   driver by default, and no SDR tool can talk to the dongle that way.
+   Download **Zadig** from <https://zadig.akeo.ie/>:
+   - Plug the dongle in.
+   - In Zadig: **Options → List All Devices**.
+   - From the dropdown pick **Bulk-In, Interface (Interface 0)** — *not*
+     "RTL2832U" alone.
+   - Confirm the target driver is **WinUSB**, then click **Replace Driver**.
+   - Unplug and re-plug the dongle.
+
+   You only ever do this once per dongle per machine.
 
 ### Linux only — let normal users touch the dongle
 
@@ -98,9 +190,24 @@ Reboot once. That's it forever.
 python -m sdr_kid
 ```
 
-You'll see a big banner, be asked to plug the dongle in, and then a menu of
-things to try. Use the arrow keys and `Enter`. Press `Ctrl+C` any time to
-stop a mode and come back to the menu.
+You'll see a big banner, a quick dongle check, and then a menu:
+
+```
+> Listen to FM radio (music)
+  Track airplanes — my antenna (dump1090)     ← real ADS-B from YOUR dongle
+  Track airplanes — the world (OpenSky)       ← online, no dongle needed
+  Listen to Air Traffic Control
+  Look at the ISS (space station)
+  Track ships on the ocean                    ← needs AIS-catcher or rtl_ais
+  Explore the RF spectrum                     ← also streams to /live in browser
+  Catch a NOAA weather-satellite image        ← picture from space!
+  Overhead alerts (ISS / NOAA)
+  Airplane logbook + watchlist
+  Record & replay raw radio (IQ)
+  Show my quests
+```
+
+Arrow keys + `Enter`. `Ctrl+C` any time to stop a mode and come back.
 
 If you want to poke around **without** the dongle (planes / ships / ISS map
 still work using the internet):
@@ -110,6 +217,43 @@ python -m sdr_kid --skip-dongle
 ```
 
 ---
+
+## Airplane tracker: two modes
+
+SDR Kid ships **two** airplane trackers, side-by-side in the menu.
+
+**"The world" (OpenSky)** — pulls positions from the free
+[OpenSky Network](https://opensky-network.org/) web API. No dongle
+required. Shows every ADS-B receiver on Earth pooled together.
+
+**"My antenna" (dump1090)** — talks to a locally-running `dump1090` on
+`127.0.0.1:30003` and shows **the planes your antenna is actually
+decoding at 1090 MHz**. This is the fun one — every dot on the map is a
+radio signal that literally arrived at your desk.
+
+### Setting up the local mode
+
+1. Install `dump1090`:
+   - **Windows:** the one-click installer above already did it.
+     Otherwise grab the zip from
+     <https://github.com/mutability/dump1090/releases>.
+   - **Linux:** `sudo apt install dump1090-mutability` (or `dump1090-fa`).
+   - **macOS:** `brew install dump1090`.
+2. In a **second terminal**, start it:
+   ```powershell
+   dump1090.exe --net       # Windows
+   ```
+   ```bash
+   dump1090 --net           # Linux / macOS
+   ```
+3. In your SDR Kid terminal, pick **"Track airplanes — my antenna
+   (dump1090)"**. Fly overhead planes appear within seconds; every one
+   is auto-logged to your logbook.
+
+> ⚠️ Same "one program owns the dongle" rule as the ship tracker: while
+> `dump1090` is running it holds the RTL-SDR, so SDR Kid's startup probe
+> will report the dongle as busy — that's expected, and the menu still
+> opens.
 
 ## Ship tracker: one extra step
 
@@ -140,6 +284,15 @@ rtl_ais -h 127.0.0.1 -P 10110
 
    That command tunes both AIS channels (161.975 & 162.025 MHz), decodes them,
    and fires the NMEA sentences at SDR Kid.
+
+   Prefer to run it from anywhere? Add it to your user PATH once:
+
+   ```powershell
+   $ais = 'C:\ais-catcher'
+   [Environment]::SetEnvironmentVariable('Path',
+     ([Environment]::GetEnvironmentVariable('Path','User') + ";$ais"), 'User')
+   $env:Path += ";$ais"
+   ```
 
 *Option B — `rtl-ais` Windows build.*
 1. Download the prebuilt Windows binary from
@@ -188,10 +341,12 @@ sdr_kid/
   progress.py       <- your quests / achievements
   logbook.py        <- SQLite aircraft logbook + watchlist
   alerts.py         <- background ISS/NOAA overhead alerts
+  deps.py           <- OS-aware external-tool detection + install hints
   modes/
     fm.py           <- FM radio
     atc.py          <- Air Traffic Control
-    planes.py       <- ADS-B airplane tracking + auto-log to logbook
+    planes.py       <- Airplane tracking via the OpenSky Network API
+    planes_local.py <- Airplane tracking from YOUR antenna via dump1090
     ships.py        <- AIS ship tracking (rtl_ais on UDP 10110)
     iss.py          <- International Space Station
     explore.py      <- RF spectrum sweep (Rich bars + Textual waterfall)
@@ -216,19 +371,81 @@ you *exactly* how radio + Python fit together.
 python -m pytest -q
 ```
 
-Tests fake the dongle so they work anywhere.
+Tests fake the dongle so they work anywhere. 43 checks covering
+achievements, logbook + watchlist, spectrum helpers, real AIS decode
+(single + multi-fragment), IQ round-trip, FastAPI landing page +
+WebSocket end-to-end, location picker, doctor probes, and the CLI
+(`--help`, `--version`, `--list`, `--doctor`).
+
+## Is my setup working? — `--doctor`
+
+Not sure if everything's installed correctly? Run:
+
+```bash
+python -m sdr_kid --doctor
+```
+
+You'll get a table like:
+
+```
+✔ pass  python: rich                stream spectrum to the browser
+✔ pass  python: pyais               decode ship AIS sentences
+✘ fail  tool: rtl_fm                needed to listen to FM / ATC / NOAA
+! warn  tool: dump1090              needed to run the airplane tracker
+✔ pass  port 8000: free             SDR Kid can start the map server
+· skip  dump1090: 127.0.0.1:30003   nothing listening (start it when you want it)
+✔ pass  UDP 10110: can bind         ship tracker will be able to listen for AIS
+✔ pass  sqlite: read/write          logbook can persist plane sightings
+```
+
+Every red row gets an OS-specific fix line ("`sudo apt install rtl-sdr`",
+"add `C:\rtl-sdr\` to PATH", etc.) — no more guessing what's broken.
+The doctor is also available from the interactive menu as **"Health
+check (is everything installed?)"**.
 
 ## Troubleshooting
 
+**Everyone**
 - **"no supported devices found"** — the driver can't see the dongle. Run
   `rtl_test`. On Linux, make sure you did the blacklist step above.
-- **No sound in FM mode** — check your speakers 🙂 or run
-  `play -n synth 1 sine 440` to test SoX.
+- **No sound in FM mode** — check your speakers 🙂 or (Linux/macOS) run
+  `play -n synth 1 sine 440` to test SoX. Windows: `sox -n -d synth 1 sine 440`.
 - **"pyrtlsdr not usable"** — `pip install pyrtlsdr` inside your venv, and
   make sure `librtlsdr` is installed system-wide.
 - **Menu keys don't move** — you're probably running in a plain Windows
   CMD window without ANSI. Use Windows Terminal or the VS Code integrated
   terminal.
+
+**Windows-specific**
+- **FM says it's playing but you hear nothing** — usually SoX rejecting
+  the bare `-d`. Test with `sox -n -t waveaudio -d synth 1 sine 440`.
+  If you hear the beep, SDR Kid (from `827317c` onward) already picks the
+  right driver — just `git pull`. If SoX says *"no default audio device
+  configured"*, your SoX build is old — reinstall it from the one-click
+  installer.
+- **`rtl_test.exe is not recognized`** — PATH not set (or you're in an old
+  PowerShell window that captured the old PATH). Close & reopen PowerShell,
+  or `$env:Path += ";$env:USERPROFILE\sdr-kid-tools\rtl-sdr\x64"` in the
+  current session. See the Windows install block above for the persistent
+  one-liner.
+- **`usb_open error -3`** — Windows still has the TV-tuner driver on the
+  dongle. Run **Zadig** (see step 4 of the Windows install) and bind the
+  "Bulk-In, Interface (Interface 0)" entry to **WinUSB**.
+- **`cb transfer status: 5, canceling ... RTLSDR: lost device`** — the
+  dongle was pulled out from under whatever program was using it, usually
+  because another process opened it in the meantime. Only **one** program
+  can own the RTL-SDR at a time. Kill any leftover `AIS-catcher.exe`,
+  `rtl_fm.exe`, `SDRSharp.exe` in Task Manager and try again.
+- **SDR Kid's dongle probe fails but AIS-catcher works** — that's expected
+  when AIS-catcher is already running. SDR Kid will now continue in
+  "soft-warn" mode; pick **Track ships** and it'll read the NMEA feed over
+  UDP. To skip the probe entirely: `python -m sdr_kid --skip-dongle`.
+- **Prefer USB-2 ports (black) over USB-3 (blue)** — USB-3 hubs on many
+  laptops generate RF noise that clobbers weak signals; the dongle also
+  seems to disconnect less on USB-2.
+
+Every error panel now includes an OS-specific install command (thanks to
+`sdr_kid/deps.py`), so you should rarely need to guess what's missing.
 
 ## How I built this
 

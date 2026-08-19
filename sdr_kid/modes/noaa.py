@@ -9,10 +9,9 @@ Flow:
 """
 from __future__ import annotations
 
-import shutil
 import subprocess
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -25,7 +24,7 @@ from rich.table import Table
 
 from sdr_kid import progress as achievements
 from sdr_kid.alerts import next_passes
-from sdr_kid.modes.alerts_ui import _ask_home
+from sdr_kid.location import ask as ask_home
 from sdr_kid.server import STATIC_DIR, get_server
 
 
@@ -164,7 +163,7 @@ def run(console: Console) -> None:
         ))
         return
 
-    home = _ask_home(console)
+    home = ask_home(console)
     if home is None:
         return
     lat, lon = home

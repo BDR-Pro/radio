@@ -138,12 +138,18 @@ NOAA_APT = Tool(
 
 DUMP1090 = Tool(
     name="dump1090",
-    what_for="decode ADS-B airplane transmissions locally",
+    what_for="decode ADS-B airplane transmissions at 1090 MHz from YOUR antenna",
     install={
-        "linux":   "sudo apt install dump1090-mutability",
+        "linux":   ("sudo apt install dump1090-mutability   # or:\n"
+                    "sudo apt install dump1090-fa   # FlightAware build"),
         "macos":   "brew install dump1090",
-        "windows": ("Grab dump1090 from https://github.com/flightaware/dump1090/releases\n"
-                    "(FlightAware builds Windows binaries)."),
+        "windows": ("Two easy options:\n"
+                    "  A) FlightAware dump1090 – https://flightaware.com/adsb/piaware/install\n"
+                    "     (Windows tab). Unzip and add its folder to PATH.\n"
+                    "  B) Original dump1090 build – https://github.com/antirez/dump1090\n"
+                    "     Prebuilt Windows binaries: https://github.com/mutability/dump1090/releases\n"
+                    "Then run in another terminal:\n"
+                    "     dump1090.exe --net"),
     },
 )
 

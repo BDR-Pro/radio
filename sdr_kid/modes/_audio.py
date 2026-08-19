@@ -6,6 +6,9 @@ import sys
 from dataclasses import dataclass
 from typing import List, Optional
 
+import tempfile
+import time
+
 from sdr_kid.deps import APLAY, RTL_FM, SOX, require, which
 
 
@@ -28,6 +31,8 @@ class AudioChain:
 
     _rtl: Optional[subprocess.Popen] = None
     _play: Optional[subprocess.Popen] = None
+    _rtl_log: Optional[str] = None
+    _play_log: Optional[str] = None
 
     def check(self) -> Optional[str]:
         msg = require(RTL_FM)
@@ -62,13 +67,22 @@ class AudioChain:
                 "-",
             ]
         if which("sox"):
-            return [
+            cmd = [
                 which("sox"), "-q",
                 "-r", "48000", "-t", "raw",
                 "-e", "signed", "-b", "16", "-c", "1",
                 "-",              # input from stdin
-                "-d",             # output to default audio device
             ]
+            # `-d` (default device) requires $AUDIODEV set on Windows and
+            # commonly errors with "no default audio device configured".
+            # Naming both the driver and the device explicitly always works.
+            if sys.platform == "win32":
+                cmd += ["-t", "waveaudio", "default"]
+            elif sys.platform == "darwin":
+                cmd += ["-t", "coreaudio", "default"]
+            else:
+                cmd += ["-d"]     # ALSA on Linux; SoX finds it fine.
+            return cmd
         return [
             which("aplay") or "aplay", "-q",
             "-r", "48000", "-f", "S16_LE", "-t", "raw", "-c", "1",
@@ -79,21 +93,63 @@ class AudioChain:
         creationflags = 0
         if sys.platform == "win32":
             creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+        # Capture stderr to temp files so we can dump it when the pipe dies.
+        self._rtl_log = tempfile.NamedTemporaryFile(
+            "w+", suffix=".rtl_fm.log", delete=False).name
+        self._play_log = tempfile.NamedTemporaryFile(
+            "w+", suffix=".player.log", delete=False).name
         self._rtl = subprocess.Popen(
             self._rtl_cmd(),
             stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
+            stderr=open(self._rtl_log, "w"),
             creationflags=creationflags,
         )
         self._play = subprocess.Popen(
             self._player_cmd(),
             stdin=self._rtl.stdout,
             stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stderr=open(self._play_log, "w"),
             creationflags=creationflags,
         )
         if self._rtl.stdout is not None:
             self._rtl.stdout.close()
+
+    def command_preview(self) -> str:
+        """Human-readable version of the pipeline, so users can debug by hand."""
+        rtl = " ".join(self._rtl_cmd())
+        ply = " ".join(self._player_cmd())
+        return f"{rtl} | {ply}"
+
+    def alive(self) -> bool:
+        return (self._rtl is not None and self._rtl.poll() is None
+                and self._play is not None and self._play.poll() is None)
+
+    def diagnose(self) -> Optional[str]:
+        """If either process died, return a diagnostic string (or None)."""
+        rtl_dead  = self._rtl  is not None and self._rtl.poll()  is not None
+        play_dead = self._play is not None and self._play.poll() is not None
+        if not (rtl_dead or play_dead):
+            return None
+        parts: List[str] = []
+        if rtl_dead:
+            parts.append(f"[bold red]rtl_fm exited with code {self._rtl.returncode}[/]")
+            if self._rtl_log:
+                try:
+                    text = open(self._rtl_log).read().strip()
+                    if text:
+                        parts.append(f"[red]rtl_fm said:[/]\n{text}")
+                except Exception:
+                    pass
+        if play_dead:
+            parts.append(f"[bold red]audio player exited with code {self._play.returncode}[/]")
+            if self._play_log:
+                try:
+                    text = open(self._play_log).read().strip()
+                    if text:
+                        parts.append(f"[red]player said:[/]\n{text}")
+                except Exception:
+                    pass
+        return "\n\n".join(parts)
 
     def stop(self) -> None:
         sig = signal.CTRL_BREAK_EVENT if sys.platform == "win32" else signal.SIGINT
