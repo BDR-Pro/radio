@@ -159,6 +159,13 @@ rtl_ais -h 127.0.0.1 -P 10110
 Boats within about 40 km of a coast (or 10 km of a river) will start
 appearing on the map.
 
+> ⚠️ **Only one program can own the RTL-SDR dongle at a time.** Because
+> AIS-catcher (or `rtl_ais`) already holds it, SDR Kid's startup dongle
+> probe won't be able to see it — that's normal. SDR Kid detects this and
+> continues in "no direct dongle" mode; Track ships still works because
+> it reads NMEA over UDP, not from the radio directly. If you want to
+> skip the probe entirely, launch SDR Kid with `--skip-dongle`.
+
 > Firewall note (Windows): the first time you launch the decoder, Windows
 > Defender may ask to allow it — click *Allow access* for **Private
 > networks** only. SDR Kid listens on `127.0.0.1`, so nothing leaves your

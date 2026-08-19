@@ -7,7 +7,7 @@ from rich.console import Console
 from rich.panel import Panel
 
 from sdr_kid.banner import render_banner
-from sdr_kid.dongle import show_dongle_card, wait_for_dongle
+from sdr_kid.dongle import probe, show_dongle_card, wait_for_dongle
 from sdr_kid.modes import (
     alerts_ui, atc, explore, fm, iq, iss, logbook_ui, noaa, planes, ships,
 )
@@ -74,19 +74,37 @@ def main() -> int:
     if "--skip-dongle" in sys.argv:
         console.print("[yellow]--skip-dongle: not checking the dongle.[/]")
     else:
-        info = wait_for_dongle(console)
+        info = probe()
         if not info.present:
+            # Second try: hardware may be plugged in but not yet enumerated.
+            info = wait_for_dongle(console, timeout=15.0)
+        if info.present:
+            show_dongle_card(console, info)
+        else:
+            reason_lower = (info.reason or "").lower()
+            probably_busy = any(k in reason_lower for k in (
+                "busy", "in use", "resource", "usb_open error", "-3", "-6",
+            ))
+            hint = (
+                "[dim]Looks like another program is already using the dongle "
+                "(AIS-catcher, rtl_ais, dump1090, SDR#…).[/]\n"
+                "[dim]That's fine — pick [bold]Track ships[/] and SDR Kid will read "
+                "from its UDP feed instead.[/]\n"
+                if probably_busy else
+                "[dim]No dongle found yet. Online-only modes (planes / ships map / "
+                "ISS map / logbook / quests) still work.[/]\n"
+                "[dim]Radio modes (FM, ATC, RF explorer, NOAA APT, IQ record) will "
+                "error out until the dongle is available.[/]\n"
+            )
             console.print(
                 Panel(
-                    f"[red]No dongle detected.[/] Reason: {info.reason}\n\n"
-                    "You can still use online-only modes (planes, ships, ISS map, "
-                    "logbook, quests) — restart with [bold]--skip-dongle[/] to try them.",
-                    border_style="red",
-                    title="[red]no radio yet[/]",
+                    f"[yellow]dongle probe:[/] {info.reason}\n\n{hint}"
+                    "[dim]Tip: pass [bold]--skip-dongle[/] on the command line to "
+                    "silence this next time.[/]",
+                    border_style="yellow",
+                    title="[yellow]continuing without direct dongle access[/]",
                 )
             )
-            return 1
-        show_dongle_card(console, info)
 
     _menu(console)
     return 0
