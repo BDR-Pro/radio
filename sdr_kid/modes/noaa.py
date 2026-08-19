@@ -37,14 +37,8 @@ DOWNLINK_HZ = {
 
 
 def _check_tools() -> Optional[str]:
-    if shutil.which("rtl_fm") is None:
-        return "rtl_fm not installed (sudo apt install rtl-sdr)"
-    if shutil.which("sox") is None:
-        return "sox not installed (sudo apt install sox)"
-    if shutil.which("noaa-apt") is None:
-        return ("noaa-apt not installed. Grab it from "
-                "https://noaa-apt.mbernardi.com.ar/ or `cargo install noaa-apt`.")
-    return None
+    from sdr_kid.deps import RTL_FM, SOX, NOAA_APT, require
+    return require(RTL_FM, SOX, NOAA_APT)
 
 
 def _record(freq_hz: int, seconds: int, out_wav: Path, console: Console) -> None:

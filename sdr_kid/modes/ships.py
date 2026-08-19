@@ -225,8 +225,16 @@ def run(console: Console) -> None:
         return
 
     server = get_server()
-    rtl_ais_present = shutil.which("rtl_ais") is not None
-    hint = "[green]rtl_ais found on PATH[/]" if rtl_ais_present else "[yellow]rtl_ais not on PATH — install it to actually decode[/]"
+    from sdr_kid.deps import RTL_AIS, current_os, which as _which
+    decoder_present = _which("rtl_ais") is not None or _which("AIS-catcher") is not None
+    if decoder_present:
+        hint = "[green]AIS decoder found on PATH[/]"
+    else:
+        hint = (
+            "[yellow]No AIS decoder on PATH.[/] "
+            f"On [bold]{current_os()}[/], install one with:\n\n"
+            f"{RTL_AIS.install.get(current_os(), '')}"
+        )
     console.print(
         Panel(
             f"Listening on [bold]UDP :{port}[/] for NMEA AIS sentences.\n"
