@@ -193,11 +193,14 @@ python -m sdr_kid
 You'll see a big banner, a quick dongle check, and then a menu:
 
 ```
-> Listen to FM radio (music)
+> Listen to FM radio (music)                  ← real radio, 88–108 MHz
+  Listen to AM radio (BBC / WWV / talk)       ← MW + SW; needs RTL-SDR v3
+                                                or an upconverter
   Track airplanes — my antenna (dump1090)     ← real ADS-B from YOUR dongle
   Track airplanes — the world (OpenSky)       ← online, no dongle needed
-  Listen to Air Traffic Control
-  Look at the ISS (space station)
+  Listen to Air Traffic Control               ← real radio, 118–137 MHz AM
+  Look at the ISS (space station)             ← tune 145.800 MHz (radio!),
+                                                or list passes, or see the map
   Track ships on the ocean                    ← needs AIS-catcher or rtl_ais
   Explore the RF spectrum                     ← also streams to /live in browser
   Catch a NOAA weather-satellite image        ← picture from space!
@@ -205,6 +208,7 @@ You'll see a big banner, a quick dongle check, and then a menu:
   Airplane logbook + watchlist
   Record & replay raw radio (IQ)
   Show my quests
+  Health check (is everything installed?)
 ```
 
 Arrow keys + `Enter`. `Ctrl+C` any time to stop a mode and come back.

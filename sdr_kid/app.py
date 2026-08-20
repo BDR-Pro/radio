@@ -15,6 +15,7 @@ from sdr_kid import __version__
 # `--version` to work.
 MENU: List[Tuple[str, str, str, str]] = [
     ("Listen to FM radio (music)",              "sdr_kid.modes.fm",           "run", "wide-band FM broadcast — 88–108 MHz"),
+    ("Listen to AM radio (BBC / WWV / talk)",   "sdr_kid.modes.am",           "run", "AM broadcast — 0.5–30 MHz (needs RTL-SDR v3 direct sampling OR upconverter)"),
     ("Track airplanes — my antenna (dump1090)", "sdr_kid.modes.planes_local", "run", "real ADS-B decoded by YOUR dongle at 1090 MHz"),
     ("Track airplanes — the world (OpenSky)",   "sdr_kid.modes.planes",       "run", "planes from every receiver on Earth, via OpenSky's free web API"),
     ("Listen to Air Traffic Control",           "sdr_kid.modes.atc",          "run", "AM aviation voice, 118–137 MHz"),

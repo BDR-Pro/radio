@@ -137,13 +137,18 @@ def _pass_table(passes: List[Pass]) -> Table:
     return table
 
 
+RADIO_ACTION = "Tune 145.800 MHz FM  (astronaut voice / SSTV — YOUR RADIO)"
+PASSES_ACTION = "List upcoming passes (next 24h — math + cached orbit)"
+MAP_ACTION = "See where the ISS is right now  (internet, no radio)"
+
+
 def _ask_action() -> str:
     return questionary.select(
         "What do you want to do?",
         choices=[
-            "See where the ISS is right now",
-            "List upcoming passes (next 24h)",
-            "Tune the radio to 145.800 MHz (astronaut voice / SSTV)",
+            RADIO_ACTION,        # RADIO first — the whole point of this project
+            PASSES_ACTION,       # when to point the antenna up
+            MAP_ACTION,          # nice-to-have world map
             "Cancel",
         ],
     ).ask() or "Cancel"
@@ -161,7 +166,7 @@ def run(console: Console) -> None:
 
     server = get_server()
 
-    if action.startswith("List upcoming passes"):
+    if action == PASSES_ACTION:
         try:
             passes = _next_passes(lat, lon)
         except Exception as exc:
@@ -175,7 +180,7 @@ def run(console: Console) -> None:
         )
         return
 
-    if action.startswith("Tune the radio"):
+    if action == RADIO_ACTION:
         chain = AudioChain(freq_hz=ISS_VOICE_FREQ_HZ, mode="fm", sample_rate=12_000, squelch=30)
         problem = chain.check()
         if problem:
