@@ -50,6 +50,8 @@ QUESTS: List[Quest] = [
           "Point the radio at the astronaut voice channel.",  _any("iss_tuned")),
     Quest("fm_listen",     "Listened to FM",
           "Play any broadcast FM station.",                   _any("fm_played")),
+    Quest("am_listen",     "Listened to AM broadcast",
+          "Tune a medium-wave or shortwave AM station.",      _any("am_played")),
     Quest("atc_listen",    "Eavesdropped on ATC",
           "Tune any aviation AM channel.",                    _any("atc_played")),
     Quest("first_ship",    "First ship decoded",
