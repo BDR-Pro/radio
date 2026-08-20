@@ -101,19 +101,26 @@ def check_python_packages() -> List[Check]:
 
 
 def check_external_tools() -> List[Check]:
+    # (Tool, required?, why, list_of_aliases_that_also_satisfy)
     tools = [
-        (deps.RTL_TEST,  True,  "probe the dongle"),
-        (deps.RTL_FM,    True,  "listen to FM / ATC / NOAA"),
-        (deps.SOX,       True,  "play audio"),
-        (deps.RTL_AIS,   False, "run the ship tracker"),
-        (deps.DUMP1090,  False, "run the airplane tracker on your antenna"),
-        (deps.NOAA_APT,  False, "decode weather-satellite images"),
+        (deps.RTL_TEST,  True,  "probe the dongle",                            ()),
+        (deps.RTL_FM,    True,  "listen to FM / ATC / NOAA",                   ()),
+        (deps.SOX,       True,  "play audio",                                  ()),
+        (deps.RTL_AIS,   False, "run the ship tracker",                        ("AIS-catcher",)),
+        (deps.DUMP1090,  False, "run the airplane tracker on your antenna",    ("dump1090-fa",)),
+        (deps.NOAA_APT,  False, "decode weather-satellite images",             ()),
     ]
     results = []
     os_name = deps.current_os()
-    for tool, required, why in tools:
-        if deps.which(tool.name) or deps.which(tool.name + ".exe"):
-            results.append(Check(f"tool: {tool.name}", PASS, why))
+    for tool, required, why, aliases in tools:
+        found_via = None
+        for candidate in (tool.name, *aliases):
+            if deps.which(candidate) or deps.which(candidate + ".exe"):
+                found_via = candidate
+                break
+        if found_via:
+            detail = why if found_via == tool.name else f"{why}  (via {found_via})"
+            results.append(Check(f"tool: {tool.name}", PASS, detail))
         else:
             hint = tool.install.get(os_name, "").splitlines()[0] if tool.install else ""
             results.append(Check(
@@ -122,10 +129,6 @@ def check_external_tools() -> List[Check]:
                 f"needed to {why}",
                 hint,
             ))
-    # Windows: AIS-catcher is a fine substitute for rtl_ais
-    if os_name == "windows" and deps.which("AIS-catcher"):
-        results.append(Check("tool: AIS-catcher", PASS,
-                             "Windows-friendly AIS decoder is available"))
     return results
 
 

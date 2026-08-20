@@ -12,6 +12,9 @@ Run dump1090 with `--net` in a second terminal (once its `.exe` is on PATH).
 from __future__ import annotations
 
 import socket
+import subprocess
+import sys
+import tempfile
 import time
 import webbrowser
 from dataclasses import dataclass, field
@@ -23,7 +26,7 @@ from rich.panel import Panel
 from rich.table import Table
 
 from sdr_kid import logbook, progress as achievements
-from sdr_kid.deps import DUMP1090, current_os
+from sdr_kid.deps import DUMP1090, current_os, which as _which
 from sdr_kid.server import get_server, write_static
 
 
@@ -199,14 +202,51 @@ def _build_map(planes: List[Plane]) -> Optional[str]:
     return m.get_root().render()
 
 
+def _spawn_dump1090() -> tuple[Optional[subprocess.Popen], Optional[str], Optional[str]]:
+    exe = _which("dump1090") or _which("dump1090-fa")
+    if not exe:
+        return None, None, None
+    log = tempfile.NamedTemporaryFile("w+", suffix=".dump1090.log", delete=False).name
+    creation = 0
+    if sys.platform == "win32":
+        creation = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+    proc = subprocess.Popen(
+        [exe, "--net", "--gain", "40"],
+        stdout=open(log, "w"), stderr=subprocess.STDOUT,
+        creationflags=creation,
+    )
+    return proc, exe, log
+
+
+def _kill(proc: Optional[subprocess.Popen]) -> None:
+    if proc is None or proc.poll() is not None:
+        return
+    try:
+        proc.terminate()
+        proc.wait(timeout=2)
+    except Exception:
+        try: proc.kill()
+        except Exception: pass
+
+
 def run(console: Console) -> None:
-    console.print(Panel(
-        "You need [bold]dump1090[/] running in a second terminal, listening on "
-        f"[bold]{DUMP1090_HOST}:{DUMP1090_SBS_PORT}[/] (its default SBS port).\n\n"
-        "Start it like this:\n"
-        "    [cyan]dump1090 --net[/]                        # Linux/macOS\n"
-        "    [cyan]dump1090.exe --net[/]                    # Windows\n\n"
-        "dump1090 owns the dongle at 1090 MHz. SDR Kid just reads its output.\n\n"
+    dump_proc, dump_exe, dump_log = _spawn_dump1090()
+    if dump_proc is not None:
+        console.print(Panel(
+            f"[green]Started {dump_exe} for you.[/] Owns the dongle at 1090 MHz\n"
+            f"and exposes SBS on {DUMP1090_HOST}:{DUMP1090_SBS_PORT}.\n"
+            "[dim]Give it 2 seconds to spin up…[/]",
+            title="[green]:airplane: airplane tracker — one-click[/]",
+            border_style="green",
+        ))
+        time.sleep(2.0)
+    else:
+        console.print(Panel(
+            "You need [bold]dump1090[/] running. Install it (see --doctor), or\n"
+            "run it manually in another terminal:\n"
+            "    [cyan]dump1090 --net --gain 40[/]                # Linux/macOS\n"
+            "    [cyan]dump1090.exe --net --gain 40[/]            # Windows\n\n"
+            "dump1090 owns the dongle at 1090 MHz. SDR Kid just reads its output.\n\n"
         "[dim]Ctrl+C to stop.[/]",
         title="[green]:airplane: airplane tracker — your antenna[/]",
         border_style="green",
@@ -224,6 +264,7 @@ def run(console: Console) -> None:
             "[bold]Track airplanes (your antenna)[/] again.",
             title="[red]dump1090 not reachable[/]", border_style="red",
         ))
+        _kill(dump_proc)
         return
 
     server = get_server()
@@ -292,3 +333,4 @@ def run(console: Console) -> None:
         console.print("[dim]stopped.[/]")
     finally:
         client.close()
+        _kill(dump_proc)

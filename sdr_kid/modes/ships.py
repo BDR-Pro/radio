@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import socket
+import subprocess
+import sys
+import tempfile
 import time
 import webbrowser
 from dataclasses import dataclass, field
@@ -13,6 +16,7 @@ from rich.panel import Panel
 from rich.table import Table
 
 from sdr_kid import progress as achievements
+from sdr_kid.deps import current_os, which as _which
 from sdr_kid.server import get_server, write_static
 
 
@@ -222,23 +226,48 @@ HOW_TO_INSTALL_WINDOWS = (
 
 
 def _how_to_install() -> str:
-    from sdr_kid.deps import current_os
     if current_os() == "windows":
         return HOW_TO_INSTALL_WINDOWS
     return HOW_TO_INSTALL_UNIX
 
 
-def run(console: Console) -> None:
-    port_ans = questionary.text(
-        "UDP port to listen on (rtl_ais default is 10110):", default=str(DEFAULT_UDP_PORT)
-    ).ask()
-    if not port_ans:
+def _spawn_ais_decoder(port: int) -> tuple[Optional[subprocess.Popen], Optional[str], Optional[str]]:
+    """Launch AIS-catcher (Windows preferred) or rtl_ais as a subprocess.
+
+    Returns (process, exe_name, log_path). All are None if no decoder is on PATH.
+    """
+    if _which("AIS-catcher"):
+        exe = _which("AIS-catcher")
+        cmd = [exe, "-u", "127.0.0.1", str(port), "-q"]
+    elif _which("rtl_ais"):
+        exe = _which("rtl_ais")
+        cmd = [exe, "-h", "127.0.0.1", "-P", str(port)]
+    else:
+        return None, None, None
+    log = tempfile.NamedTemporaryFile("w+", suffix=".ais.log", delete=False).name
+    creation = 0
+    if sys.platform == "win32":
+        creation = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+    proc = subprocess.Popen(
+        cmd, stdout=open(log, "w"), stderr=subprocess.STDOUT,
+        creationflags=creation,
+    )
+    return proc, cmd[0], log
+
+
+def _kill(proc: Optional[subprocess.Popen]) -> None:
+    if proc is None or proc.poll() is not None:
         return
     try:
-        port = int(port_ans)
-    except ValueError:
-        console.print("[red]not a number[/]")
-        return
+        proc.terminate()
+        proc.wait(timeout=2)
+    except Exception:
+        try: proc.kill()
+        except Exception: pass
+
+
+def run(console: Console) -> None:
+    port = DEFAULT_UDP_PORT
 
     listener = AISListener(port=port)
     err = listener.start()
@@ -247,45 +276,70 @@ def run(console: Console) -> None:
         return
 
     server = get_server()
-    from sdr_kid.deps import RTL_AIS, current_os, which as _which
-    decoder_present = _which("rtl_ais") is not None or _which("AIS-catcher") is not None
-    if decoder_present:
-        hint = "[green]AIS decoder found on PATH[/]"
-    else:
-        hint = (
-            "[yellow]No AIS decoder on PATH.[/] "
-            f"On [bold]{current_os()}[/], install one with:\n\n"
-            f"{RTL_AIS.install.get(current_os(), '')}"
-        )
-    console.print(
-        Panel(
-            f"Listening on [bold]UDP :{port}[/] for NMEA AIS sentences.\n"
-            f"{hint}\n\n"
-            f"Live map (updates every 10s once ships come in): "
-            f"[cyan]{server.url}/view/ships.html[/]\n\n"
-            "[dim]Ctrl+C to stop.[/]",
-            title="[blue]:ship: ship tracker (local AIS decoder)[/]",
+    proc, exe_name, log_path = _spawn_ais_decoder(port)
+    if proc is not None:
+        console.print(Panel(
+            f"[green]Started {exe_name} for you.[/] "
+            f"Decoding 161.975 / 162.025 MHz and firing NMEA at UDP :{port}.\n\n"
+            f"[dim]log: {log_path}[/]\n"
+            "[dim]This mode owns the dongle while it's open. Ctrl+C to stop.[/]",
+            title="[blue]:ship: ship tracker — one-click[/]",
             border_style="blue",
-        )
-    )
+        ))
+    else:
+        console.print(Panel(
+            _how_to_install().format(port=port),
+            title="[yellow]no AIS decoder on PATH[/]", border_style="yellow",
+        ))
 
     opened = False
     last_map = 0.0
+    started = time.time()
     _celebrated: Dict[str, bool] = {}
     try:
         with Live(console=console, refresh_per_second=2) as live:
             while True:
                 listener.poll()
                 now = time.time()
-                if listener.rx_count == 0:
-                    live.update(Panel(
-                        _how_to_install().format(port=port),
-                        title="[yellow]waiting for AIS…[/]",
-                        border_style="yellow",
+
+                # If we spawned a decoder and it died, surface why.
+                if proc is not None and proc.poll() is not None:
+                    live.stop()
+                    tail = ""
+                    if log_path:
+                        try:
+                            tail = open(log_path).read().strip()[-800:]
+                        except Exception:
+                            pass
+                    console.print(Panel(
+                        f"[red]{exe_name} exited with code {proc.returncode}[/]\n\n"
+                        f"[dim]{tail or '(no output)'}[/]\n\n"
+                        "[yellow]Common causes:[/]\n"
+                        "  • Another program owns the dongle (SDR#, dump1090, rtl_fm)\n"
+                        "  • Windows Defender blocked the first launch — allow it\n"
+                        "  • Dongle unplugged mid-run",
+                        title="[red]AIS decoder crashed[/]", border_style="red",
                     ))
+                    break
+
+                if listener.rx_count == 0 and now - started > 8:
+                    live.update(Panel(
+                        f"[yellow]Decoder is running but no AIS heard yet.[/]\n\n"
+                        "AIS transmissions are line-of-sight and only carry ~40 km with\n"
+                        "a normal whip antenna. If you're inland, this is expected.\n\n"
+                        "Try:\n"
+                        "  • move the antenna to a window facing water\n"
+                        "  • wait a minute — vessels transmit every 2–10 s but signals fade\n"
+                        "  • aim any Yagi towards the nearest port\n\n"
+                        "[dim]Ctrl+C to stop.[/]",
+                        title="[yellow]:ship: listening…[/]", border_style="yellow",
+                    ))
+                elif listener.rx_count == 0:
+                    live.update(Panel("[cyan]starting up…[/]", border_style="cyan"))
                 else:
-                    if listener.ships and listener.rx_count > 0 and not _celebrated.get("ship_seen"):
-                        achievements.celebrate(console, achievements.record("ship_seen", amount=len(listener.ships)))
+                    if listener.ships and not _celebrated.get("ship_seen"):
+                        achievements.celebrate(console,
+                            achievements.record("ship_seen", amount=len(listener.ships)))
                         _celebrated["ship_seen"] = True
                     live.update(_table(listener))
                     if now - last_map > 10:
@@ -293,14 +347,13 @@ def run(console: Console) -> None:
                         if html:
                             write_static("ships.html", html)
                             if not opened:
-                                try:
-                                    webbrowser.open(f"{server.url}/view/ships.html")
-                                except Exception:
-                                    pass
+                                try: webbrowser.open(f"{server.url}/view/ships.html")
+                                except Exception: pass
                                 opened = True
                         last_map = now
                 time.sleep(0.5)
     except KeyboardInterrupt:
         console.print("[dim]stopped.[/]")
     finally:
+        _kill(proc)
         listener.close()
