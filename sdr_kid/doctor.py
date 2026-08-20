@@ -101,19 +101,26 @@ def check_python_packages() -> List[Check]:
 
 
 def check_external_tools() -> List[Check]:
+    # (Tool, required?, why, list_of_aliases_that_also_satisfy)
     tools = [
-        (deps.RTL_TEST,  True,  "probe the dongle"),
-        (deps.RTL_FM,    True,  "listen to FM / ATC / NOAA"),
-        (deps.SOX,       True,  "play audio"),
-        (deps.RTL_AIS,   False, "run the ship tracker"),
-        (deps.DUMP1090,  False, "run the airplane tracker on your antenna"),
-        (deps.NOAA_APT,  False, "decode weather-satellite images"),
+        (deps.RTL_TEST,  True,  "probe the dongle",                            ()),
+        (deps.RTL_FM,    True,  "listen to FM / ATC / NOAA",                   ()),
+        (deps.SOX,       True,  "play audio",                                  ()),
+        (deps.RTL_AIS,   False, "run the ship tracker",                        ("AIS-catcher",)),
+        (deps.DUMP1090,  False, "run the airplane tracker on your antenna",    ("dump1090-fa",)),
+        (deps.NOAA_APT,  False, "decode weather-satellite images",             ()),
     ]
     results = []
     os_name = deps.current_os()
-    for tool, required, why in tools:
-        if deps.which(tool.name) or deps.which(tool.name + ".exe"):
-            results.append(Check(f"tool: {tool.name}", PASS, why))
+    for tool, required, why, aliases in tools:
+        found_via = None
+        for candidate in (tool.name, *aliases):
+            if deps.which(candidate) or deps.which(candidate + ".exe"):
+                found_via = candidate
+                break
+        if found_via:
+            detail = why if found_via == tool.name else f"{why}  (via {found_via})"
+            results.append(Check(f"tool: {tool.name}", PASS, detail))
         else:
             hint = tool.install.get(os_name, "").splitlines()[0] if tool.install else ""
             results.append(Check(
@@ -122,11 +129,19 @@ def check_external_tools() -> List[Check]:
                 f"needed to {why}",
                 hint,
             ))
-    # Windows: AIS-catcher is a fine substitute for rtl_ais
-    if os_name == "windows" and deps.which("AIS-catcher"):
-        results.append(Check("tool: AIS-catcher", PASS,
-                             "Windows-friendly AIS decoder is available"))
     return results
+
+
+def _model_capabilities(name: str) -> str:
+    """Human-readable capability line for a detected dongle model."""
+    n = (name or "").lower()
+    if "rtl-sdr blog" in n or "rtlsdrblog" in n:
+        return "RTL-SDR Blog v3 → direct sampling for AM/HF, bias-tee OK"
+    if "nooelec" in n:
+        return "Nooelec — VHF/UHF only; AM broadcast needs a Ham-It-Up upconverter"
+    if "generic" in n or "rtl2832" in n:
+        return "generic RTL2832 — VHF/UHF only unless you added the Q-branch mod"
+    return "unknown model — VHF/UHF definitely works; AM depends on the board"
 
 
 def check_dongle() -> Check:
@@ -135,8 +150,9 @@ def check_dongle() -> Check:
     from sdr_kid.dongle import probe
     info = probe()
     if info.present:
-        return Check("dongle: RTL-SDR reachable", PASS,
-                     f"{info.name or 'RTL-SDR'}  tuner={info.tuner or '?'}")
+        caps = _model_capabilities(info.name)
+        detail = f"{info.name or 'RTL-SDR'} · tuner={info.tuner or '?'} · {caps}"
+        return Check("dongle: RTL-SDR reachable", PASS, detail)
     reason = (info.reason or "").lower()
     busy = any(k in reason for k in ("busy", "in use", "usb_open error", "-3", "-6", "resource"))
     if busy:
