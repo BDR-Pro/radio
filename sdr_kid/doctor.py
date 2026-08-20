@@ -129,14 +129,27 @@ def check_external_tools() -> List[Check]:
     return results
 
 
+def _model_capabilities(name: str) -> str:
+    """Human-readable capability line for a detected dongle model."""
+    n = (name or "").lower()
+    if "rtl-sdr blog" in n or "rtlsdrblog" in n:
+        return "RTL-SDR Blog v3 → direct sampling for AM/HF, bias-tee OK"
+    if "nooelec" in n:
+        return "Nooelec — VHF/UHF only; AM broadcast needs a Ham-It-Up upconverter"
+    if "generic" in n or "rtl2832" in n:
+        return "generic RTL2832 — VHF/UHF only unless you added the Q-branch mod"
+    return "unknown model — VHF/UHF definitely works; AM depends on the board"
+
+
 def check_dongle() -> Check:
     """Try to open the dongle briefly. WARN (not FAIL) if it's busy — that's
     normal when dump1090 or AIS-catcher is running."""
     from sdr_kid.dongle import probe
     info = probe()
     if info.present:
-        return Check("dongle: RTL-SDR reachable", PASS,
-                     f"{info.name or 'RTL-SDR'}  tuner={info.tuner or '?'}")
+        caps = _model_capabilities(info.name)
+        detail = f"{info.name or 'RTL-SDR'} · tuner={info.tuner or '?'} · {caps}"
+        return Check("dongle: RTL-SDR reachable", PASS, detail)
     reason = (info.reason or "").lower()
     busy = any(k in reason for k in ("busy", "in use", "usb_open error", "-3", "-6", "resource"))
     if busy:
